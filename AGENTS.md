@@ -24,7 +24,23 @@ Mavis Digital Campus (MDC) is an institutional-support system for The Mavis Inst
 - Windows: run `run_windows.bat` from the repository root.
 - macOS/Linux: run `./run_mac_linux.sh` from the repository root.
 - Direct server after dependencies are installed: `python -m uvicorn app:app --host 127.0.0.1 --port 8000`.
-- Tests: `python -m pytest -q` (the current suite also imports Pillow; see Development Status for the dependency gap).
+- Runtime dependencies: `requirements.txt`. Development/test dependencies: `requirements-dev.txt`, which includes the runtime requirements.
+
+Windows:
+
+```bat
+python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
+python -m pytest
+```
+
+macOS/Linux:
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 -m pip install -r requirements-dev.txt
+python3 -m pytest
+```
 
 ## Development rules
 

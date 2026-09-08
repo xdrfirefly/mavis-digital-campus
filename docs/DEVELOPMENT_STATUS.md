@@ -18,7 +18,7 @@ Audit scope: repository contents as inspected on 2026-09-07. This document does 
 - All backend orchestration, schema, and route logic reside in the 465 KB `app.py`; there is no separated controller/service/repository layer for most feature areas.
 - The frontend is operational but most UI state and rendering are concentrated in the 221 KB `static/js/app.js`.
 - Canonical art is present for several buildings and staff; the asset tree has no dedicated Vernadette or Poe sprite directories, while code uses stable IDs and UI representations for both.
-- The test suite depends on `pytest` and imports `PIL.Image`, but `requirements.txt` lists only FastAPI, Uvicorn, pypdf, and tzdata. The current launch scripts install only those requirements.
+- The test suite is in a dedicated `requirements-dev.txt`, which includes `requirements.txt` plus pinned `pytest` and Pillow. The application launch scripts intentionally install runtime requirements only.
 
 ## Referenced / Planned
 
@@ -39,5 +39,4 @@ Audit scope: repository contents as inspected on 2026-09-07. This document does 
 - The suite is one large smoke/regression file rather than feature-scoped tests, making failure diagnosis and selective execution harder.
 - Browser behavior is protected mainly by source-string assertions; no browser-driven end-to-end test infrastructure was found.
 - The external Weather Underground, Open-Meteo, Grants.gov, OpenAI, and Gemini integrations have mocked/unit coverage but no documented live integration test process.
-- Current dependency metadata cannot reproduce the test environment because test tools and Pillow are undeclared.
 - This audit environment had no discoverable Python executable or `.venv`, so the existing suite and server could not be executed here.
