@@ -12,7 +12,7 @@ Audit scope: repository contents as inspected on 2026-09-07. This document does 
 - Events/calendar foundation, local moon calculation, weather/seasonal data storage and refresh adapter.
 - Phase 1 phenology observations with human, imported, and suggested sources; Rose review can confirm or reject suggestions without feeding planning logic.
 - Phase 2 trusted phenology history comparison across years, including optional location filtering and factual date summaries.
-- Phase 5 Seasonal Context: Rose's read-only, 45-day seasonal evidence bridge separates established observations from open checks; Stella can summarize that context through Ask Campus without affecting Daily Steward or planning.
+- Phase 5 Seasonal Context: Rose's read-only, 45-day seasonal evidence bridge separates established observations from open checks; Stella can summarize it through Ask Campus and users can inspect the same context in Weather & Seasons → Phenology, without affecting Daily Steward or planning.
 - Grants.gov discovery/import and local grant tracking.
 - 201 test functions in `tests/test_smoke.py`, covering backend behavior plus static/UI regression guards.
 

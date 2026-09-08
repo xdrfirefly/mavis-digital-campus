@@ -340,6 +340,8 @@ body.modal-open{overflow:hidden}
 .memory-list{display:grid;gap:8px}
 .memory-list.compact .memory-card p{max-height:72px;overflow:auto}
 .memory-card{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:10px;align-items:start;padding:10px;border:1px solid #4d5d54;border-left:4px solid #708d7d;background:#18231d}
+.seasonal-briefing .seasonal-observation{border-left-color:#55704e}
+.seasonal-briefing .seasonal-check{border-left-color:#d1af68;background:#22261c}
 .memory-card.importance-core{border-left-color:#d1af68;background:#22261c}
 .memory-card.archived{opacity:.68;background:#141a16;border-left-color:#626a65}
 .memory-icon{width:30px;height:30px;display:grid;place-items:center;border:1px solid #5c7065;background:#101812;color:#d8c58f;font:800 16px/1 Georgia,serif}

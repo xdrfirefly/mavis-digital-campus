@@ -1,6 +1,6 @@
-// v0.9.5 — Weather-Aware Phenology.
-import { worldConfig } from './world-config.js?v=093';
-import { assets, forestPlacements, worldProps } from './world-assets.js?v=093';
+// v0.9.6 — Seasonal Context Bridge.
+import { worldConfig } from './world-config.js?v=096';
+import { assets, forestPlacements, worldProps } from './world-assets.js?v=096';
 import { createCamera } from './camera.js';
 
 const els = {
@@ -1125,6 +1125,25 @@ function drawerLibrary(){
 
 
 let phenologyHistory=null;
+let seasonalContext=null;
+let seasonalContextError='';
+let seasonalContextLoading=false;
+function seasonalBriefing(){
+  if(!seasonalContext){
+    return `<section class="drawer-section seasonal-briefing"><div class="section-row"><h4>Rose’s Seasonal Briefing</h4><span>read-only bridge</span></div>${seasonalContextError?`<div class="output-empty"><strong>Seasonal Context unavailable.</strong><span>${esc(seasonalContextError)}</span></div>`:'<div class="output-empty"><strong>Loading Rose’s Seasonal Briefing…</strong><span>Reading the same seasonal context available to Stella.</span></div>'}<div class="memory-form-actions"><button type="button" data-refresh-seasonal-context>Refresh briefing</button></div></section>`;
+  }
+  const context=seasonalContext;
+  const observed=context.observed_now||[];
+  const checking=context.worth_checking||[];
+  const weather=context.weather||{};
+  const observationCards=observed.map(item=>`<article class="memory-card seasonal-observation"><div class="memory-icon">◉</div><div class="memory-copy"><span class="memory-meta">${esc(item.date||'date unavailable')}${item.location?` · ${esc(item.location)}`:''}</span><strong>${esc(item.subject)} — ${esc(item.stage)}</strong><small>${esc(item.provenance||'observation')}</small></div></article>`).join('');
+  const checkCards=checking.map(item=>`<article class="memory-card seasonal-check"><div class="memory-icon">?</div><div class="memory-copy"><span class="memory-meta">${item.location?esc(item.location):'location unavailable'}</span><strong>${esc(item.subject)} — ${esc(item.stage)}</strong><p>${esc(item.reason||'Worth checking.')}</p><small>${esc(item.provenance||'Rose seasonal check')}</small></div></article>`).join('');
+  return `<section class="drawer-section seasonal-briefing"><div class="section-row"><h4>Rose’s Seasonal Briefing</h4><span>${esc(context.season||'Season not set')} · ${esc(context.calendar_date||'date unavailable')}</span></div><p><small>Updated ${esc(context.generated_at||'time unavailable')} · Rose’s read-only context for Stella.</small></p>
+    <div class="section-row"><h5>Observed Now</h5><span>established observations</span></div>${observationCards||'<div class="output-empty"><strong>No recent confirmed or observed phenology records.</strong></div>'}
+    <div class="section-row"><h5>Worth Checking</h5><span>not yet an established observation</span></div>${checkCards||'<div class="output-empty"><strong>Nothing currently waiting for a Rose check.</strong></div>'}
+    <div class="section-row"><h5>Weather Context</h5><span>${esc(weather.source||'Unavailable')}</span></div><div class="memory-list"><article class="memory-card"><div class="memory-icon">☁</div><div class="memory-copy"><strong>${esc(weather.summary||'Weather unavailable')}</strong><small>${esc(weather.source||'Unavailable')} · ${esc(weather.provenance||'normalized MDC weather')}</small></div></article></div>
+    <div class="memory-form-actions"><button type="button" data-refresh-seasonal-context>Refresh briefing</button></div></section>`;
+}
 function drawerEnvironment(){
   const env=state.environment||{};
   const windows=env.seasonal_windows||[];
@@ -1177,6 +1196,7 @@ function drawerEnvironment(){
     <div class="memory-list">${windows.map(w=>`<article class="memory-card ${w.status==='Archived'?'archived':''}"><div class="memory-icon">◐</div><div class="memory-copy"><span class="memory-meta">${esc(w.category)} · ${esc(w.start_md)} → ${esc(w.end_md)}</span><strong>${esc(w.name)}</strong><p>${esc(w.notes||'')}</p><small>${esc(w.status)} · ${esc(w.priority)}</small></div><div class="memory-actions"><button type="button" data-seasonal-status="${w.id}" data-seasonal-status-value="${w.status==='Archived'?'Active':'Archived'}">${w.status==='Archived'?'Restore':'Archive'}</button></div></article>`).join('')}</div>
   </section>
   <section class="drawer-section"><div class="section-row"><h4>Phenology</h4><span>Rose review</span></div><p>Record what was actually observed. Suggestions remain unconfirmed until a person reviews them.</p>
+    ${seasonalBriefing()}
     <form class="memory-form" data-phenology-form><div class="memory-form-grid"><label>Subject / indicator<input name="subject" required placeholder="Apple tree or spring peepers"></label><label>Stage / event<select name="stage"><option>bud break</option><option>first leaf</option><option>first bloom</option><option>full bloom</option><option>fruit set</option><option>ripening</option><option>harvest</option><option>leaf color</option><option>leaf fall</option><option>first seen</option><option>first heard</option><option>emergence</option><option>nesting</option><option>migration / arrival</option><option>first frost</option><option>first hard freeze</option><option>first snow</option><option>soil workable</option><option>spring peepers</option><option>fireflies</option><option>peak fall color</option></select></label></div><div class="memory-form-grid"><label>Date<input type="date" name="observation_date" value="${esc(today)}" required></label><label>Location / area<input name="location_area" required placeholder="Fruit Forest"></label></div><label>Notes<textarea name="notes" rows="2" placeholder="What did you actually see or hear?"></textarea></label><div class="memory-form-actions"><button type="submit">Add Observation</button></div></form>
     ${phenology.length?`<div class="memory-list">${phenology.map(p=>`<article class="memory-card"><div class="memory-icon">◉</div><div class="memory-copy"><span class="memory-meta">${esc(p.observation_date)} · ${esc(p.location_area)} · ${esc(p.source)}</span><strong>${esc(p.subject)} — ${esc(p.stage)}</strong><p>${esc(p.notes||'')}</p><small>${esc(p.status)} · Rose review</small></div>${p.status==='suggested'?`<div class="memory-actions"><button type="button" data-phenology-review="${p.id}" data-phenology-status="confirmed">Confirm</button><button type="button" data-phenology-review="${p.id}" data-phenology-status="rejected">Reject</button></div>`:''}</article>`).join('')}</div>`:'<div class="output-empty"><strong>No phenology observations yet.</strong><span>Begin with a direct observation from the land.</span></div>'}
     <div class="section-row"><h4>History / Compare Years</h4><span>Rose archive</span></div><form class="memory-form" data-phenology-history-form><div class="memory-form-grid"><label>Subject<input name="subject" required></label><label>Stage<input name="stage" required></label><label>Location (optional)<input name="location_area"></label></div><button type="submit">Compare Records</button></form>${phenologyHistory?`<div class="memory-card"><strong>Rose found ${phenologyHistory.records.length} trusted record${phenologyHistory.records.length===1?'':'s'} for ${esc(phenologyHistory.subject)} — ${esc(phenologyHistory.stage)}.</strong>${phenologyHistory.records.length<2?'<p>More years are needed for comparison.</p>':`<p>${esc(phenologyHistory.statistics.years_recorded)} years recorded · Average ${esc(phenologyHistory.statistics.average_date)} · Earliest ${esc(phenologyHistory.statistics.earliest_date)} · Latest ${esc(phenologyHistory.statistics.latest_date)}</p>`}<p>${phenologyHistory.records.map(r=>`${esc(r.year)} — ${esc(r.observation_date)} — ${esc(r.location_area)}`).join('<br>')}</p></div>`:''}
@@ -1626,6 +1646,7 @@ function openDrawer(panel,id=null,parent=null){
     els.viewport.classList.remove('drawer-open');
     return;
   }
+  if(panel==='environment'&&!seasonalContext&&!seasonalContextError)void loadSeasonalContext();
 
   let kicker='Campus',title='Panel',html='';
   if(panel==='executive'){kicker='Executive';title='What Needs Me';html=drawerExecutive();}
@@ -1822,6 +1843,13 @@ function render(){
 }
 
 async function getJson(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok){let d={};try{d=await r.json();}catch{}throw new Error(d.detail||`Request failed (${r.status})`);}return r.json();}
+async function loadSeasonalContext(force=false){
+  if(seasonalContextLoading||(!force&&(seasonalContext||seasonalContextError)))return;
+  seasonalContextLoading=true;seasonalContextError='';
+  try{seasonalContext=await getJson('/api/environment/seasonal-context');}
+  catch(err){seasonalContext=null;seasonalContextError=err.message||'The Seasonal Context service could not be reached.';}
+  finally{seasonalContextLoading=false;if(activeView.panel==='environment'&&!els.drawer.hidden)openDrawer('environment');}
+}
 function providerEls(providerId){
   if(providerId==='gemini'){
     return {dot:els.geminiStatusDot,text:els.geminiConnectionText,model:els.geminiModel,button:els.geminiTestBtn,result:els.geminiTestResult};
@@ -2607,6 +2635,7 @@ els.drawerBody.addEventListener('click',e=>{
   else if(btn.hasAttribute('data-library-edit-cancel')){libraryEditingId=null;openDrawer('library');}
   else if(btn.dataset.libraryStatus)setLibraryStatus(btn.dataset.libraryStatus,btn.dataset.libraryStatusValue);
   else if(btn.hasAttribute('data-weather-refresh'))refreshWeather();
+  else if(btn.hasAttribute('data-refresh-seasonal-context'))loadSeasonalContext(true);
   else if(btn.dataset.seasonalStatus)setSeasonalStatus(btn.dataset.seasonalStatus,btn.dataset.seasonalStatusValue);
   else if(btn.dataset.phenologyReview)reviewPhenology(btn.dataset.phenologyReview,btn.dataset.phenologyStatus);
   else if(btn.dataset.watchSuggest)post(`/api/environment/phenology/watchlist/${btn.dataset.watchSuggest}/suggest`,{}).then(()=>openDrawer('environment')).catch(err=>toast(err.message));

@@ -10,8 +10,8 @@ import app as campus
 
 LIVE_VERSION = campus.SCHEMA_VERSION
 LIVE_BUILD = f"v{LIVE_VERSION}"
-LIVE_SHELL_LABEL = f"{LIVE_BUILD} · Weather-Aware Phenology"
-LIVE_CACHE_KEY = "093"
+LIVE_SHELL_LABEL = f"{LIVE_BUILD} · Seasonal Context Bridge"
+LIVE_CACHE_KEY = "096"
 
 
 def test_seed_state_and_executive_summary():
@@ -7562,3 +7562,32 @@ def test_stella_seasonal_context_handoff_is_read_only_and_optional(tmp_path, mon
         assert "unavailable" in unavailable_result["message"].lower()
     finally:
         campus.DB_PATH = old
+
+
+def test_v096_seasonal_context_transparency_ui_and_release_contract():
+    import json
+    index = (ROOT / "static/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
+    css = (ROOT / "static/css/app.css").read_text(encoding="utf-8")
+    manifest = json.loads((ROOT / "static/assets/asset-manifest.json").read_text(encoding="utf-8"))
+    assert LIVE_VERSION == "0.9.6"
+    assert LIVE_CACHE_KEY == "096"
+    assert "Rose’s Seasonal Briefing" in js
+    assert "getJson('/api/environment/seasonal-context')" in js
+    assert "Observed Now" in js and "established observations" in js
+    assert "item.date" in js and "item.location" in js and "item.provenance" in js
+    assert "Worth Checking" in js and "not yet an established observation" in js
+    assert "Rose seasonal check" in js
+    assert ".seasonal-observation" in css and ".seasonal-check" in css
+    assert "Weather Context" in js and "weather.source" in js
+    assert "No recent confirmed or observed phenology records." in js
+    assert "Nothing currently waiting for a Rose check." in js
+    assert "Seasonal Context unavailable." in js
+    assert "data-refresh-seasonal-context" in js
+    assert LIVE_SHELL_LABEL in index
+    assert f'app.js?v={LIVE_CACHE_KEY}' in index
+    assert f'app.css?v={LIVE_CACHE_KEY}' in index
+    assert f'world.css?v={LIVE_CACHE_KEY}' in index
+    assert manifest["build"] == LIVE_BUILD
+    assert manifest["version"] == LIVE_VERSION
+    assert manifest["ai_runtime"]["stabilization_recovery"]["schema_version"] == LIVE_VERSION
