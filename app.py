@@ -55,7 +55,7 @@ OPENAI_LIST_PRICES_PER_MILLION = {
 }
 TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4.0
 DEFAULT_DAILY_ESTIMATED_COST_LIMIT_USD = 1.00
-SCHEMA_VERSION = "0.8.7.4.2"
+SCHEMA_VERSION = "0.9.3"
 MAX_LIBRARY_UPLOAD_BYTES = 100 * 1024 * 1024
 LIBRARY_MATERIAL_TYPES = ("Lesson Plan", "Instructor Notes", "Worksheet", "Slideshow", "Handout", "Supply List", "Photo", "Video", "Audio", "Document", "Spreadsheet", "Archive", "Reference", "Other")
 PROGRAMS_LIBRARY_DECISIONS = ("reuse", "revise", "create_new")
@@ -7490,7 +7490,7 @@ async def _campus_ai_advice(agent: str, question: str) -> dict[str, Any]:
     return {"status":"ok","mode":"ai_advice","handled_by":CAMPUS_AGENT_LABELS[agent],"agent":agent,"message":message,"model":result.model,"provider":result.provider,"project_created":False,"additional_ai_calls":1}
 
 
-app = FastAPI(title="Mavis Digital Campus", version="0.8.7.4.2", lifespan=lifespan)
+app = FastAPI(title="Mavis Digital Campus", version=SCHEMA_VERSION, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
@@ -8181,6 +8181,22 @@ def _phenology_text(value: str, field: str, limit: int) -> str:
     return cleaned
 
 
+def phenology_history(conn: sqlite3.Connection, subject: str, stage: str, location_area: str = "") -> dict[str, Any]:
+    subject_display=_phenology_text(subject,"subject",180); stage_display=_phenology_text(stage,"stage",120)
+    norm_subject=" ".join(subject_display.casefold().split()); norm_stage=" ".join(stage_display.casefold().split())
+    params=[norm_subject,norm_stage]; where="lower(trim(subject))=? AND lower(trim(stage))=? AND status IN ('observed','confirmed')"
+    if location_area.strip(): where+=" AND lower(trim(location_area))=?"; params.append(" ".join(location_area.casefold().split()))
+    records=rows(conn,f"SELECT subject,stage,observation_date,location_area,source,status,notes FROM phenology_observations WHERE {where} ORDER BY observation_date",tuple(params))
+    for record in records: record["year"]=int(record["observation_date"][:4])
+    dates=[date.fromisoformat(r["observation_date"]) for r in records]; years=sorted({r["year"] for r in records})
+    stats={"years_recorded":len(years),"earliest_date":dates[0].isoformat() if dates else None,"latest_date":dates[-1].isoformat() if dates else None,"average_date":None,"current_year_difference_days":None,"comparison_years":0}
+    if dates:
+        avg_doy=round(sum(d.timetuple().tm_yday for d in dates)/len(dates)); stats["average_date"]=(date(2000,1,1)+timedelta(days=avg_doy-1)).strftime("%b %d").replace(" 0"," ")
+        current=[d for d in dates if d.year==date.today().year]; prior=[d for d in dates if d.year<date.today().year]
+        if current and prior: stats["comparison_years"]=len({d.year for d in prior}); stats["current_year_difference_days"]=current[0].timetuple().tm_yday-round(sum(d.timetuple().tm_yday for d in prior)/len(prior))
+    return {"subject":subject_display,"stage":stage_display,"location_area":location_area.strip(),"records":records,"statistics":stats}
+
+
 @app.post("/api/environment/phenology")
 async def api_phenology_create(req: PhenologyObservationRequest) -> dict[str, Any]:
     try:
@@ -8205,6 +8221,12 @@ async def api_phenology_create(req: PhenologyObservationRequest) -> dict[str, An
         result = dict(conn.execute("SELECT * FROM phenology_observations WHERE id=?", (cursor.lastrowid,)).fetchone())
     await hub.broadcast()
     return {"status": "created", "observation": result}
+
+
+@app.get("/api/environment/phenology/history")
+async def api_phenology_history(subject: str, stage: str, location_area: str = "") -> dict[str, Any]:
+    with db() as conn:
+        return phenology_history(conn, subject, stage, location_area)
 
 
 @app.post("/api/environment/phenology/{observation_id}/review")

@@ -57,7 +57,7 @@ No `mavis.db` was present in the audited checkout; `library/` and `repository/` 
 1. A user request can become a Chief plan, then an explicit human approval. Approved plans run role workflows, save artifacts, enter final review, and may be archived only after the relevant human gate.
 2. Library files move from inbox to human cataloging before they become trusted Library materials. Local text extraction feeds the SQLite search index; the Librarian searches this trusted local index.
 3. Weather refresh optionally queries Weather Underground for the configured station and queries Open-Meteo for forecast data. Results are stored in SQLite and read by the environment UI and Daily Steward.
-4. Phenology observations are stored locally with source and review status. System suggestions remain suggestions until a human confirms or rejects them; they do not feed planning in Phase 1.
+4. Phenology observations are stored locally with source and review status. Rose can compare trusted observed/confirmed records by normalized subject and stage across years; suggestions remain excluded until human review and phenology does not feed planning.
 5. Ask the Campus routes some requests to deterministic local handlers; configured AI role calls are recorded in `ai_calls` and guarded by the AI controls.
 
 ## Configuration

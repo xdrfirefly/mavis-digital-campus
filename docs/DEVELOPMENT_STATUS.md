@@ -11,6 +11,7 @@ Audit scope: repository contents as inspected on 2026-09-07. This document does 
 - People ledger, work sessions with audit records, clock in/out, deterministic Poe commands, reports, and CSV export.
 - Events/calendar foundation, local moon calculation, weather/seasonal data storage and refresh adapter.
 - Phase 1 phenology observations with human, imported, and suggested sources; Rose review can confirm or reject suggestions without feeding planning logic.
+- Phase 2 trusted phenology history comparison across years, including optional location filtering and factual date summaries.
 - Grants.gov discovery/import and local grant tracking.
 - 201 test functions in `tests/test_smoke.py`, covering backend behavior plus static/UI regression guards.
 

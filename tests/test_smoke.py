@@ -7449,3 +7449,19 @@ def test_phenology_watchlist_seed_custom_status_and_suggestion(tmp_path, monkeyp
         suggestion=asyncio.run(campus.api_phenology_watchlist_suggest(grapes["id"]))["observation"]
         assert suggestion["status"]=="suggested" and suggestion["source"]=="system suggestion"
     finally: campus.DB_PATH=original
+
+
+def test_phenology_history_uses_trusted_normalized_records(tmp_path, monkeypatch):
+    import asyncio
+    import app as campus
+    old=campus.DB_PATH; monkeypatch.setattr(campus,"DB_PATH",tmp_path/"history.db")
+    try:
+        campus.init_db()
+        for subject,stage,when,status,location in [(" Ironweed "," First Bloom ","2024-08-07","observed","Fruit Forest"),("ironweed","first bloom","2025-08-02","confirmed","Mavis Manor"),("Ironweed","first bloom","2026-07-29","suggested","Fruit Forest"),("Ironweed","first bloom","2027-08-09","rejected","Fruit Forest")]:
+            asyncio.run(campus.api_phenology_create(campus.PhenologyObservationRequest(subject=subject,stage=stage,observation_date=when,location_area=location,source="human observation" if status!="suggested" else "system suggestion",status=status)))
+        with campus.db() as conn: history=campus.phenology_history(conn,"IRONWEED","first bloom")
+        assert [r["year"] for r in history["records"]]==[2024,2025]
+        assert history["statistics"]["years_recorded"]==2 and history["statistics"]["earliest_date"]=="2024-08-07"
+        with campus.db() as conn: local=campus.phenology_history(conn,"ironweed","first bloom","Fruit Forest")
+        assert len(local["records"])==1 and local["records"][0]["location_area"]=="Fruit Forest"
+    finally: campus.DB_PATH=old

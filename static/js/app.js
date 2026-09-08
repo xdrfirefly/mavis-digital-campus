@@ -1,6 +1,6 @@
-// v0.8.7.4.2 — Living Campus choreography: cross-campus social walks, paired strolls, and an animated current-weather/moon HUD. Programs Auto-Archive remains final human approval only.
-import { worldConfig } from './world-config.js?v=08742';
-import { assets, forestPlacements, worldProps } from './world-assets.js?v=08742';
+// v0.9.3 — Phenology Multi-Year Comparison.
+import { worldConfig } from './world-config.js?v=093';
+import { assets, forestPlacements, worldProps } from './world-assets.js?v=093';
 import { createCamera } from './camera.js';
 
 const els = {
@@ -78,7 +78,7 @@ let chiefPlanSubmitting = false;
 let campusAskSubmitting = false;
 let campusAskLastResult = null;
 let campusAskHistory = [];
-const CAMPUS_ASK_SESSION_KEY='mavis-campus-ask-thread-v08742';
+const CAMPUS_ASK_SESSION_KEY='mavis-campus-ask-thread-v093';
 let worldBuilt = false;
 const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 const { routeNodes, routeEdges, buildingNode } = worldConfig;
@@ -1124,6 +1124,7 @@ function drawerLibrary(){
 }
 
 
+let phenologyHistory=null;
 function drawerEnvironment(){
   const env=state.environment||{};
   const windows=env.seasonal_windows||[];
@@ -1177,6 +1178,7 @@ function drawerEnvironment(){
   <section class="drawer-section"><div class="section-row"><h4>Phenology</h4><span>Rose review</span></div><p>Record what was actually observed. Suggestions remain unconfirmed until a person reviews them.</p>
     <form class="memory-form" data-phenology-form><div class="memory-form-grid"><label>Subject / indicator<input name="subject" required placeholder="Apple tree or spring peepers"></label><label>Stage / event<select name="stage"><option>bud break</option><option>first leaf</option><option>first bloom</option><option>full bloom</option><option>fruit set</option><option>ripening</option><option>harvest</option><option>leaf color</option><option>leaf fall</option><option>first seen</option><option>first heard</option><option>emergence</option><option>nesting</option><option>migration / arrival</option><option>first frost</option><option>first hard freeze</option><option>first snow</option><option>soil workable</option><option>spring peepers</option><option>fireflies</option><option>peak fall color</option></select></label></div><div class="memory-form-grid"><label>Date<input type="date" name="observation_date" value="${esc(today)}" required></label><label>Location / area<input name="location_area" required placeholder="Fruit Forest"></label></div><label>Notes<textarea name="notes" rows="2" placeholder="What did you actually see or hear?"></textarea></label><div class="memory-form-actions"><button type="submit">Add Observation</button></div></form>
     ${phenology.length?`<div class="memory-list">${phenology.map(p=>`<article class="memory-card"><div class="memory-icon">◉</div><div class="memory-copy"><span class="memory-meta">${esc(p.observation_date)} · ${esc(p.location_area)} · ${esc(p.source)}</span><strong>${esc(p.subject)} — ${esc(p.stage)}</strong><p>${esc(p.notes||'')}</p><small>${esc(p.status)} · Rose review</small></div>${p.status==='suggested'?`<div class="memory-actions"><button type="button" data-phenology-review="${p.id}" data-phenology-status="confirmed">Confirm</button><button type="button" data-phenology-review="${p.id}" data-phenology-status="rejected">Reject</button></div>`:''}</article>`).join('')}</div>`:'<div class="output-empty"><strong>No phenology observations yet.</strong><span>Begin with a direct observation from the land.</span></div>'}
+    <div class="section-row"><h4>History / Compare Years</h4><span>Rose archive</span></div><form class="memory-form" data-phenology-history-form><div class="memory-form-grid"><label>Subject<input name="subject" required></label><label>Stage<input name="stage" required></label><label>Location (optional)<input name="location_area"></label></div><button type="submit">Compare Records</button></form>${phenologyHistory?`<div class="memory-card"><strong>Rose found ${phenologyHistory.records.length} trusted record${phenologyHistory.records.length===1?'':'s'} for ${esc(phenologyHistory.subject)} — ${esc(phenologyHistory.stage)}.</strong>${phenologyHistory.records.length<2?'<p>More years are needed for comparison.</p>':`<p>${esc(phenologyHistory.statistics.years_recorded)} years recorded · Average ${esc(phenologyHistory.statistics.average_date)} · Earliest ${esc(phenologyHistory.statistics.earliest_date)} · Latest ${esc(phenologyHistory.statistics.latest_date)}</p>`}<p>${phenologyHistory.records.map(r=>`${esc(r.year)} — ${esc(r.observation_date)} — ${esc(r.location_area)}`).join('<br>')}</p></div>`:''}
     <div class="section-row"><h4>Watchlist</h4><span>${watchlist.filter(item=>item.status==='Active').length} active</span></div><p>Worth watching only—use Ask Rose to create one review question, never a fact.</p>${watchlist.map(w=>`<article class="memory-card"><div class="memory-copy"><span class="memory-meta">${esc(w.category)} · ${esc(w.location_area)} · ${esc(w.status)}</span><strong>${esc(w.subject)}</strong><p>${esc((w.stages||[]).join(' · '))}</p></div><div class="memory-actions">${w.status==='Active'?`<button type="button" data-watch-suggest="${w.id}">Ask Rose</button>`:''}<button type="button" data-watch-status="${w.id}" data-watch-status-value="${w.status==='Active'?'Inactive':'Active'}">${w.status==='Active'?'Pause':'Activate'}</button></div></article>`).join('')}
     <form class="memory-form" data-watchlist-form><div class="memory-form-grid"><label>Subject<input name="subject" required></label><label>Category<input name="category" value="Custom indicator" required></label></div><div class="memory-form-grid"><label>Location<input name="location_area" required></label><label>Stages (comma-separated)<input name="stages" required></label></div><button type="submit">Add Watchlist Item</button></form>
   </section>`;
@@ -2394,6 +2396,7 @@ async function saveSeasonalWindow(form){
 async function setSeasonalStatus(id,status){try{await post(`/api/environment/seasonal-windows/${id}/status`,{status});toast(`Seasonal window ${String(status).toLowerCase()}.`);openDrawer('environment');}catch(err){toast(err.message);}}
 async function savePhenology(form){const fd=new FormData(form);try{await post('/api/environment/phenology',{subject:fd.get('subject'),stage:fd.get('stage'),observation_date:fd.get('observation_date'),location_area:fd.get('location_area'),source:'human observation',status:'observed',notes:fd.get('notes')});toast('Phenology observation recorded.');openDrawer('environment');}catch(err){toast(err.message);}}
 async function reviewPhenology(id,status){try{await post(`/api/environment/phenology/${id}/review`,{status});toast(`Phenology suggestion ${status}.`);openDrawer('environment');}catch(err){toast(err.message);}}
+async function loadPhenologyHistory(form){const f=new FormData(form),q=new URLSearchParams({subject:f.get('subject'),stage:f.get('stage'),location_area:f.get('location_area')||''});try{phenologyHistory=await getJson(`/api/environment/phenology/history?${q}`);openDrawer('environment');}catch(err){toast(err.message);}}
 async function saveWatchlist(form){const f=new FormData(form);try{await post('/api/environment/phenology/watchlist',{subject:f.get('subject'),category:f.get('category'),location_area:f.get('location_area'),stages:String(f.get('stages')).split(','),notes:''});openDrawer('environment');}catch(err){toast(err.message);}}
 
 
@@ -2677,6 +2680,7 @@ els.drawerBody.addEventListener('submit',e=>{
   if(form.hasAttribute('data-weather-day-form')){saveWeatherDay(form);return;}
   if(form.hasAttribute('data-seasonal-window-form')){saveSeasonalWindow(form);return;}
   if(form.hasAttribute('data-phenology-form')){savePhenology(form);return;}
+  if(form.hasAttribute('data-phenology-history-form')){loadPhenologyHistory(form);return;}
   if(form.hasAttribute('data-watchlist-form')){saveWatchlist(form);return;}
   if(form.hasAttribute('data-work-report-form')){loadWorkReport(readWorkReportFilters(form));return;}
   if(form.hasAttribute('data-poe-command-form')){sendPoeCommand(form);return;}
