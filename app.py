@@ -7361,10 +7361,21 @@ def _campus_weather_sensitive_work_intent(text: str) -> bool:
     return timing and outdoor_work
 
 
+def _campus_seasonal_context_intent(text: str) -> bool:
+    q = text.casefold()
+    return any(phrase in q for phrase in (
+        "seasonal context", "happening seasonally", "happening on the property",
+        "happening on property", "rose observed", "rose want me to check",
+        "rose wants me to check",
+    ))
+
+
 def _campus_auto_route_detail(text: str, previous_agent: str | None = None) -> tuple[str, str, str]:
     q = text.casefold().strip()
     if any(token in q for token in ("what should i focus", "what should i do", "focus on today", "priorities today", "priority today", "plan my day", "today's priorities", "todays priorities", "needs my attention today")):
         return "stella", "Daily priorities and attention management belong with Stella.", "auto"
+    if _campus_seasonal_context_intent(text):
+        return "stella", "Rose's seasonal evidence can be summarized by Stella without making work decisions.", "auto"
     if re.search(r"\b(clock|clocked|hours?|work session|volunteer hours?|timesheet|timekeeping)\b", q) or q.startswith("poe"):
         return "poe", "Work hours, volunteers, and day-to-day operations belong with Poe.", "auto"
     if re.search(r"\b(grant|grants|funding|funder|foundation|award|proposal deadline)\b", q) or q.startswith("vernadette"):
@@ -7391,6 +7402,39 @@ def _campus_auto_route(text: str) -> str:
 def _campus_daily_intent(text: str) -> bool:
     q=text.casefold()
     return any(token in q for token in ("what should i focus", "what should i do", "focus on today", "priorities today", "priority today", "plan my day", "today's priorities", "todays priorities", "needs my attention today"))
+
+
+def _stella_seasonal_context_answer(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Present Rose's established evidence and open checks without making decisions."""
+    try:
+        context = seasonal_context(conn)
+    except Exception:
+        return {
+            "message": "Rose's Seasonal Context is unavailable right now. I can still help with the rest of the Campus.",
+            "seasonal_context": None,
+        }
+
+    observed = list(context.get("observed_now") or [])
+    worth_checking = list(context.get("worth_checking") or [])
+    weather = dict(context.get("weather") or {})
+    observed_text = "; ".join(
+        f"{item.get('subject')} — {item.get('stage')} ({item.get('provenance')})"
+        for item in observed
+    ) or "Rose has no established recent observations recorded."
+    checks_text = "; ".join(
+        f"{item.get('subject')} — {item.get('stage')} ({item.get('provenance')})"
+        for item in worth_checking
+    ) or "Rose has no open seasonal checks."
+    weather_summary = weather.get("summary") or "Weather unavailable"
+    weather_source = weather.get("source") or "Unavailable"
+    return {
+        "message": (
+            f"Rose's established recent observations: {observed_text}. "
+            f"Worth checking, not established observations: {checks_text}. "
+            f"Normalized weather: {weather_summary} ({weather_source})."
+        ),
+        "seasonal_context": context,
+    }
 
 
 def _campus_explicit_project_intent(text: str) -> bool:
@@ -7531,6 +7575,10 @@ async def api_campus_ask(req: CampusAskRequest) -> dict[str, Any]:
     if routed=="stella" and _campus_daily_intent(text):
         with db() as conn: steward=daily_steward(conn)
         return {"status":"ok","mode":"deterministic","handled_by":CAMPUS_AGENT_LABELS['stella'],"agent":"stella","message":"I checked the Campus lanes and kept today to the smallest useful set of priorities.","daily_steward":steward,"open_panel":"briefing","open_label":"Daily Steward","project_created":False,"additional_ai_calls":0,"route_reason":route_reason,"route_source":route_source}
+
+    if routed=="stella" and _campus_seasonal_context_intent(text):
+        with db() as conn: answer=_stella_seasonal_context_answer(conn)
+        return {"status":"ok","mode":"deterministic","handled_by":CAMPUS_AGENT_LABELS['stella'],"agent":"stella","message":answer["message"],"seasonal_context":answer["seasonal_context"],"project_created":False,"additional_ai_calls":0,"route_reason":route_reason,"route_source":route_source}
 
     if routed=="stewart" and _campus_weather_intent(text):
         with db() as conn: answer=_campus_weather_answer(conn,text)

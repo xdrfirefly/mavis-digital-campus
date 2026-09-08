@@ -7502,3 +7502,63 @@ def test_seasonal_context_trust_recency_weather_and_read_only(tmp_path, monkeypa
         assert unavailable["weather"]["summary"]=="Weather unavailable"
         assert unavailable["weather"]["source"]=="Unavailable"
     finally: campus.DB_PATH=old
+
+
+def test_stella_seasonal_context_handoff_is_read_only_and_optional(tmp_path, monkeypatch):
+    import asyncio
+    import app as campus
+    old = campus.DB_PATH
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "stella-seasonal-context.db")
+    try:
+        campus.init_db()
+        with campus.db() as conn:
+            today = campus.environment_summary(conn)["local_date"]
+            now = campus.utc_now()
+            for subject, status, source in [
+                ("Ironweed", "observed", "human observation"),
+                ("Grapes", "confirmed", "system suggestion"),
+                ("Sunchokes", "suggested", "system suggestion"),
+            ]:
+                conn.execute(
+                    "INSERT INTO phenology_observations(subject,stage,observation_date,location_area,status,source,notes,review_agent_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (subject, "full bloom", today, "Fruit Forest", status, source, "", "research", now, now),
+                )
+            conn.execute(
+                "INSERT INTO phenology_checks(subject,stage,location_area,reason,status,rose_agent_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                ("Sunchokes", "first flower", "Fruit Forest", "Worth checking.", "pending", "research", now, now),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO weather_current(id,source,source_kind,summary,updated_at) VALUES(1,?,?,?,?)",
+                ("Open-Meteo fallback", "model_fallback", "Warm and humid", now),
+            )
+            before = {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in ("phenology_observations", "phenology_checks", "tasks")}
+            daily_before = campus.daily_steward(conn)
+
+        result = asyncio.run(campus.api_campus_ask(campus.CampusAskRequest(text="What has Rose observed recently?", agent="auto")))
+        assert result["agent"] == "stella"
+        assert result["mode"] == "deterministic"
+        assert result["additional_ai_calls"] == 0
+        context = result["seasonal_context"]
+        assert {item["subject"] for item in context["observed_now"]} == {"Ironweed", "Grapes"}
+        assert {item["provenance"] for item in context["observed_now"]} == {"human observation", "Rose confirmed observation"}
+        assert context["worth_checking"] == [{"subject": "Sunchokes", "stage": "first flower", "location": "Fruit Forest", "reason": "Worth checking.", "provenance": "Rose seasonal check"}]
+        assert context["weather"]["source"] == "Open-Meteo fallback"
+        assert "Worth checking, not established observations" in result["message"]
+
+        with campus.db() as conn:
+            after = {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in before}
+            daily_after = campus.daily_steward(conn)
+        assert after == before
+        assert daily_after["focus"] == daily_before["focus"]
+        assert daily_after["watch"] == daily_before["watch"]
+
+        def unavailable(_conn):
+            raise RuntimeError("Seasonal Context unavailable")
+
+        monkeypatch.setattr(campus, "seasonal_context", unavailable)
+        unavailable_result = asyncio.run(campus.api_campus_ask(campus.CampusAskRequest(text="What is the current seasonal context?", agent="stella")))
+        assert unavailable_result["agent"] == "stella"
+        assert unavailable_result["seasonal_context"] is None
+        assert "unavailable" in unavailable_result["message"].lower()
+    finally:
+        campus.DB_PATH = old
