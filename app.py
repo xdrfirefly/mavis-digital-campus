@@ -55,7 +55,7 @@ OPENAI_LIST_PRICES_PER_MILLION = {
 }
 TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4.0
 DEFAULT_DAILY_ESTIMATED_COST_LIMIT_USD = 1.00
-SCHEMA_VERSION = "0.9.4"
+SCHEMA_VERSION = "0.9.5"
 MAX_LIBRARY_UPLOAD_BYTES = 100 * 1024 * 1024
 LIBRARY_MATERIAL_TYPES = ("Lesson Plan", "Instructor Notes", "Worksheet", "Slideshow", "Handout", "Supply List", "Photo", "Video", "Audio", "Document", "Spreadsheet", "Archive", "Reference", "Other")
 PROGRAMS_LIBRARY_DECISIONS = ("reuse", "revise", "create_new")
@@ -8283,7 +8283,9 @@ async def api_phenology_watchlist_suggest(watch_id:int)->dict[str,Any]:
 @app.post("/api/environment/phenology/checks/generate")
 async def api_phenology_checks_generate()->dict[str,Any]:
     with db() as conn:
-        today=date.fromisoformat(str(environment_summary(conn)["local_date"])); created=[]
+        env=environment_summary(conn); today=date.fromisoformat(str(env["local_date"])); created=[]; weather=env.get("current_conditions") or {}; temp=weather.get("temperature_f"); weather_reason=""
+        if temp is not None and float(temp)<=32: weather_reason=" Temperatures reached freezing or below; please check whether frost was actually observed."
+        elif temp is not None and float(temp)<=35: weather_reason=" Temperatures approached freezing; please check whether frost was actually observed."
         for watch in conn.execute("SELECT * FROM phenology_watchlist WHERE status='Active' ORDER BY priority DESC,id LIMIT 12").fetchall():
             stages=json.loads(watch["stages_json"])
             for stage in stages[:1]:
@@ -8291,7 +8293,8 @@ async def api_phenology_checks_generate()->dict[str,Any]:
                 duplicate=conn.execute("SELECT 1 FROM phenology_checks WHERE lower(trim(subject))=? AND lower(trim(stage))=? AND status='pending'",(" ".join(watch['subject'].casefold().split())," ".join(stage.casefold().split()))).fetchone()
                 if exists or duplicate: continue
                 prior=conn.execute("SELECT COUNT(*) FROM phenology_observations WHERE lower(trim(subject))=? AND lower(trim(stage))=? AND status IN ('observed','confirmed')",(" ".join(watch['subject'].casefold().split())," ".join(stage.casefold().split()))).fetchone()[0]
-                reason=f"Worth checking because {prior} trusted prior record{'s' if prior!=1 else ''} exist." if prior else "Worth checking because this is an active watchlist stage with limited historical records."
+                reason=(f"Worth checking because {prior} trusted prior record{'s' if prior!=1 else ''} exist." if prior else "Worth checking because this is an active watchlist stage with limited historical records.")
+                if watch['subject'].casefold() in {'first frost','first hard freeze'} and weather_reason: reason+=weather_reason
                 now=utc_now(); cur=conn.execute("INSERT INTO phenology_checks(watchlist_id,subject,stage,location_area,reason,observation_exists_this_year,status,rose_agent_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(watch['id'],watch['subject'],stage,watch['location_area'],reason,0,'pending','research',now,now)); created.append(int(cur.lastrowid)); break
             if len(created)>=3: break
     await hub.broadcast(); return {"status":"generated","check_ids":created}

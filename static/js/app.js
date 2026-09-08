@@ -1,4 +1,4 @@
-// v0.9.4 — Phenology Seasonal Check Queue.
+// v0.9.5 — Weather-Aware Phenology.
 import { worldConfig } from './world-config.js?v=093';
 import { assets, forestPlacements, worldProps } from './world-assets.js?v=093';
 import { createCamera } from './camera.js';
