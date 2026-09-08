@@ -1,5 +1,5 @@
 {
-  "build": "v0.9.3",
+  "build": "v0.9.4",
   "runtime_ai": false,
   "canonical_assets": {
     "chief_of_staff": {
@@ -185,7 +185,7 @@
       "enabled": true,
       "workflow_journal_table": "workflow_runs",
       "schema_metadata_table": "schema_meta",
-      "schema_version": "0.9.3",
+      "schema_version": "0.9.4",
       "detect_active_workflow_on_restart": true,
       "explicit_human_retry_required": true,
       "preserve_completed_tasks_on_retry": true,
@@ -357,7 +357,7 @@
     "supersede_with_history": true,
     "active_superseded_memory_sent_to_ai": false
   },
-  "version": "0.9.3",
+  "version": "0.9.4",
   "institutional_playbooks": {
     "enabled": true,
     "table": "playbooks",

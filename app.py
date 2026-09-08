@@ -55,7 +55,7 @@ OPENAI_LIST_PRICES_PER_MILLION = {
 }
 TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4.0
 DEFAULT_DAILY_ESTIMATED_COST_LIMIT_USD = 1.00
-SCHEMA_VERSION = "0.9.3"
+SCHEMA_VERSION = "0.9.4"
 MAX_LIBRARY_UPLOAD_BYTES = 100 * 1024 * 1024
 LIBRARY_MATERIAL_TYPES = ("Lesson Plan", "Instructor Notes", "Worksheet", "Slideshow", "Handout", "Supply List", "Photo", "Video", "Audio", "Document", "Spreadsheet", "Archive", "Reference", "Other")
 PROGRAMS_LIBRARY_DECISIONS = ("reuse", "revise", "create_new")
@@ -644,6 +644,13 @@ def init_db() -> None:
                 notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_phenology_watchlist_status ON phenology_watchlist(status,category,subject);
+            CREATE TABLE IF NOT EXISTS phenology_checks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, watchlist_id INTEGER REFERENCES phenology_watchlist(id) ON DELETE SET NULL,
+                subject TEXT NOT NULL, stage TEXT NOT NULL, location_area TEXT NOT NULL, reason TEXT NOT NULL,
+                observation_exists_this_year INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', rose_agent_id TEXT NOT NULL DEFAULT 'research',
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL, resolved_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_phenology_checks_status ON phenology_checks(status,updated_at DESC);
 
             CREATE TABLE IF NOT EXISTS playbooks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1963,6 +1970,7 @@ def environment_summary(conn: sqlite3.Connection) -> dict[str, Any]:
     windows = rows(conn, "SELECT * FROM seasonal_windows ORDER BY category,name,id")
     phenology = rows(conn, "SELECT * FROM phenology_observations ORDER BY observation_date DESC,id DESC LIMIT 50")
     watchlist = rows(conn, "SELECT * FROM phenology_watchlist ORDER BY category,subject,id")
+    checks = rows(conn, "SELECT * FROM phenology_checks WHERE status='pending' ORDER BY created_at DESC LIMIT 3")
     for item in watchlist:
         try: item["stages"] = json.loads(item.pop("stages_json"))
         except Exception: item["stages"] = []
@@ -2036,6 +2044,7 @@ def environment_summary(conn: sqlite3.Connection) -> dict[str, Any]:
         "seasonal_windows": windows,
         "phenology_observations": phenology,
         "phenology_watchlist": watchlist,
+        "phenology_checks": checks,
         "forecast_days": weather,
         "forecast_source": settings.get("forecast_source") or "Open-Meteo",
         "fallback_provider": settings.get("fallback_provider") or "Open-Meteo",
@@ -2058,7 +2067,7 @@ def system_health(conn: sqlite3.Connection) -> dict[str, Any]:
         "chief_plans","research_artifacts","programs_artifacts","chief_review_artifacts",
         "workflow_runs","chief_request_submissions","schema_meta","deliverables","revision_requests","revision_plans","project_files","institutional_memory","playbooks","briefing_snapshots",
         "library_collections","library_materials","library_material_index","library_inbox","programs_library_preflights","program_archive_events",
-        "environment_settings","weather_current","weather_daily","seasonal_windows","phenology_observations","phenology_watchlist",
+        "environment_settings","weather_current","weather_daily","seasonal_windows","phenology_observations","phenology_watchlist","phenology_checks",
     }
     tables = {
         row[0]
@@ -8270,6 +8279,29 @@ async def api_phenology_watchlist_suggest(watch_id:int)->dict[str,Any]:
         stages=json.loads(watch["stages_json"]); stage=stages[0] if stages else "check-in"
         today=date.fromisoformat(str(environment_summary(conn)["local_date"])); now=utc_now(); prompt=f"Rose check-in: Are you seeing {watch['subject']} — {stage} at {watch['location_area']}?"; cur=conn.execute("INSERT INTO phenology_observations(subject,stage,observation_date,location_area,status,source,notes,review_agent_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(watch["subject"],stage,today.isoformat(),watch["location_area"],"suggested","system suggestion",prompt,"research",now,now)); result=dict(conn.execute("SELECT * FROM phenology_observations WHERE id=?",(cur.lastrowid,)).fetchone())
     await hub.broadcast(); return {"status":"suggested","observation":result}
+
+@app.post("/api/environment/phenology/checks/generate")
+async def api_phenology_checks_generate()->dict[str,Any]:
+    with db() as conn:
+        today=date.fromisoformat(str(environment_summary(conn)["local_date"])); created=[]
+        for watch in conn.execute("SELECT * FROM phenology_watchlist WHERE status='Active' ORDER BY priority DESC,id LIMIT 12").fetchall():
+            stages=json.loads(watch["stages_json"])
+            for stage in stages[:1]:
+                exists=conn.execute("SELECT 1 FROM phenology_observations WHERE lower(trim(subject))=? AND lower(trim(stage))=? AND substr(observation_date,1,4)=? AND status IN ('observed','confirmed')",(" ".join(watch['subject'].casefold().split())," ".join(stage.casefold().split()),str(today.year))).fetchone()
+                duplicate=conn.execute("SELECT 1 FROM phenology_checks WHERE lower(trim(subject))=? AND lower(trim(stage))=? AND status='pending'",(" ".join(watch['subject'].casefold().split())," ".join(stage.casefold().split()))).fetchone()
+                if exists or duplicate: continue
+                prior=conn.execute("SELECT COUNT(*) FROM phenology_observations WHERE lower(trim(subject))=? AND lower(trim(stage))=? AND status IN ('observed','confirmed')",(" ".join(watch['subject'].casefold().split())," ".join(stage.casefold().split()))).fetchone()[0]
+                reason=f"Worth checking because {prior} trusted prior record{'s' if prior!=1 else ''} exist." if prior else "Worth checking because this is an active watchlist stage with limited historical records."
+                now=utc_now(); cur=conn.execute("INSERT INTO phenology_checks(watchlist_id,subject,stage,location_area,reason,observation_exists_this_year,status,rose_agent_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(watch['id'],watch['subject'],stage,watch['location_area'],reason,0,'pending','research',now,now)); created.append(int(cur.lastrowid)); break
+            if len(created)>=3: break
+    await hub.broadcast(); return {"status":"generated","check_ids":created}
+
+@app.post("/api/environment/phenology/checks/{check_id}/status")
+async def api_phenology_check_status(check_id:int, req: LibraryCollectionStatusRequest)->dict[str,Any]:
+    if req.status not in {'answered','dismissed'}: raise HTTPException(status_code=400,detail="Check status must be answered or dismissed.")
+    with db() as conn:
+        conn.execute("UPDATE phenology_checks SET status=?,resolved_at=?,updated_at=? WHERE id=?",(req.status,utc_now(),utc_now(),check_id))
+    await hub.broadcast(); return {"status":req.status}
 
 
 @app.post("/api/stella/daily")
