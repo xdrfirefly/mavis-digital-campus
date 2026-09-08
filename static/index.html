@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mavis Digital Campus v0.8.7.4.2</title>
+  <link rel="stylesheet" href="/static/css/app.css?v=08742" />
+  <link rel="stylesheet" href="/static/css/world.css?v=08742" />
+</head>
+<body>
+  <header class="topbar">
+    <img class="brandcrest" src="/static/assets/ui/crest.svg" alt="Mavis crest" />
+    <div class="brandcopy">
+      <div class="eyebrow">THE MAVIS INSTITUTE</div>
+      <h1>Mavis Digital Campus <span>v0.8.7.4.2 · Campus Cleanup · Ask the Campus · Calendar · Daily Steward · Weather & Seasons · Poe Work Hours · Vernadette Grants · Ask Polish · Living Campus</span></h1>
+      <p>Victorian nonprofit operating world · live team, projects, workspaces, approvals, and human control.</p>
+    </div>
+    <div class="top-status">
+      <button id="needs-me-btn" class="needs-me-btn" type="button"><span>Needs Me</span><strong id="needs-me-count">0</strong></button>
+      <button id="briefing-btn" class="needs-me-btn" type="button"><span>Daily</span><strong id="briefing-count">0</strong></button>
+      <button id="repository-btn" class="top-repository-btn" type="button"><span>Repository</span><strong id="top-repository-count">0</strong></button>
+      <button id="memory-btn" class="top-memory-btn" type="button"><span>Memory</span><strong id="top-memory-count">0</strong></button>
+      <button id="playbooks-btn" class="top-memory-btn" type="button"><span>Playbooks</span><strong id="top-playbook-count">0</strong></button>
+      <div class="status-block"><span>Projects</span><strong id="top-project-count">0</strong></div>
+      <div class="status-block"><span>Approvals</span><strong id="top-approval-count">0</strong></div>
+      <div class="status-block"><span>Staff</span><strong id="top-people-count">6</strong></div>
+      <div class="status-block"><span>Campus</span><strong id="campus-clock">--:--</strong></div>
+      <div class="connection" aria-live="polite"><span class="connection-light"></span><strong id="ws-text">Connecting…</strong></div>
+    </div>
+  </header>
+
+  <main class="shell dashboard-shell">
+
+    <aside class="dashboard-rail left-rail" aria-label="Campus team and workspaces">
+      <section class="victorian-panel department-panel">
+        <header><span>Campus Team</span><small>People first · workspaces below</small></header>
+        <button type="button" class="rail-department" data-open-agent="chief">
+          <span class="rail-icon">♟</span><span><strong>Stella</strong><small>Chief of Staff · Executive coordination</small></span><em id="chief-team-status" class="team-status">Available</em>
+        </button>
+        <button type="button" class="rail-department" data-open-agent="programs">
+          <span class="rail-icon">▥</span><span><strong>Percy</strong><small>Programs & Education · Coopenheimer Barn</small></span><em id="programs-team-status" class="team-status">Available</em>
+        </button>
+        <button type="button" class="rail-department" data-open-agent="research">
+          <span class="rail-icon">⌕</span><span><strong>Rose</strong><small>Research & Archives · Library of Mavis</small></span><em id="research-team-status" class="team-status">Available</em>
+        </button>
+        <button type="button" class="rail-department" data-open-agent="caretaker">
+          <span class="rail-icon">✿</span><span><strong>Stewart</strong><small>Land Steward · Fruit Forest & Grounds</small></span><em id="caretaker-team-status" class="team-status">Available</em>
+        </button>
+        <button type="button" class="rail-department poe" data-open-agent="operations">
+          <span class="rail-icon">⚙</span><span><strong>Poe</strong><small>Operations & Volunteers · Coopenheimer Barn</small></span><em id="operations-team-status" class="team-status">Available</em>
+        </button>
+        <button type="button" class="rail-department grants" data-open-agent="grants">
+          <span class="rail-icon">✦</span><span><strong>Vernadette</strong><small>Grants & Development · Mavis Manor</small></span><em id="grants-team-status" class="team-status">Available</em>
+        </button>
+        <button type="button" class="rail-wide-button attention" data-open-panel="briefing">Stella Daily Steward</button>
+        <button type="button" class="rail-wide-button" data-open-panel="projects">View all projects</button>
+        <button type="button" class="rail-wide-button repository" data-open-panel="repository">Project Repository</button>
+        <button type="button" class="rail-wide-button memory" data-open-panel="memory">Institutional Memory</button>
+        <button type="button" class="rail-wide-button memory" data-open-panel="playbooks">Institutional Playbooks</button>
+      </section>
+
+      <section class="victorian-panel needs-panel">
+        <header><span>Needs Me</span><b id="rail-needs-count">0</b></header>
+        <div class="rail-stat decision-ready"><span>Ready to approve</span><strong id="rail-ready-count">0</strong></div>
+        <div class="rail-stat decision-revise"><span>Stella recommends revision</span><strong id="rail-chief-revisions-count">0</strong></div>
+        <div class="rail-stat decision-hold"><span>Stella recommends hold</span><strong id="rail-hold-count">0</strong></div>
+        <div class="rail-stat"><span>Plan approvals</span><strong id="rail-plan-count">0</strong></div>
+        <div class="rail-stat"><span>Revision plan approvals</span><strong id="rail-revision-plan-count">0</strong></div>
+        <div class="rail-stat"><span>Changes already requested</span><strong id="rail-revisions-count">0</strong></div>
+        <div class="rail-stat"><span>Blocked tasks</span><strong id="rail-blocked-count">0</strong></div>
+        <button type="button" class="rail-wide-button attention" data-open-panel="executive">Go to Needs Me</button>
+      </section>
+    </aside>
+
+    <section class="world-card">
+      <div class="world-toolbar">
+        <div>
+          <div class="section-kicker">CAMPUS WORLD</div>
+          <h2>Cozy 16-bit Victorian Farm</h2>
+        </div>
+        <div class="world-actions">
+          <div class="camera-controls" aria-label="Map camera controls">
+            <button id="zoom-out" type="button" title="Zoom out">−</button>
+            <span id="zoom-label">100%</span>
+            <button id="zoom-in" type="button" title="Zoom in">+</button>
+            <button id="camera-home" type="button">Home</button>
+          </div>
+          <button id="focus-workspace-btn" class="button-quiet focus-workspace-btn" type="button" aria-pressed="false">Focus Workspace</button>
+          <button id="reset-btn" class="button-quiet" type="button">Reset demo data</button>
+        </div>
+      </div>
+
+      <div id="world-viewport" class="world-viewport" aria-label="Mavis Digital Campus map">
+        <div id="world-stage" class="world-stage">
+          <div class="terrain-base" aria-hidden="true"></div>
+          <div class="terrain-patches" aria-hidden="true"></div>
+
+          <div class="pond-main" aria-hidden="true">
+            <span class="pond-glint glint-a"></span><span class="pond-glint glint-b"></span>
+            <span class="lily lily-a"></span><span class="lily lily-b"></span><span class="lily lily-c"></span>
+            <span class="reed reed-a"></span><span class="reed reed-b"></span><span class="reed reed-c"></span>
+          </div>
+          <div class="pond-label world-sign" aria-hidden="true">Pond</div>
+          <div id="pond-weather-widget" class="pond-living-icons" aria-label="Current weather and moon" hidden>
+            <button class="living-weather-card kind-cloud" type="button" aria-label="Open Weather & Seasons"><span class="weather-scene" aria-hidden="true"><span class="weather-cloud cloud-a"></span></span><span class="weather-card-copy"><strong>—</strong><small>Weather</small></span></button>
+            <button class="living-moon-chip" type="button" aria-label="Open Moon Cycle"><span class="moon-glyph" aria-hidden="true">🌙</span></button>
+          </div>
+
+          <svg class="stream-layer" viewBox="0 0 1400 900" aria-hidden="true">
+            <path class="stream-shadow" d="M330 215 C420 248 478 298 445 345 C405 400 360 432 392 488 C420 540 480 548 450 600 C430 638 500 650 590 620 C690 586 760 558 835 590 C920 626 985 672 1085 706 C1175 737 1248 742 1335 770" />
+            <path class="stream-bank" d="M330 215 C420 248 478 298 445 345 C405 400 360 432 392 488 C420 540 480 548 450 600 C430 638 500 650 590 620 C690 586 760 558 835 590 C920 626 985 672 1085 706 C1175 737 1248 742 1335 770" />
+            <path class="stream-water" d="M330 215 C420 248 478 298 445 345 C405 400 360 432 392 488 C420 540 480 548 450 600 C430 638 500 650 590 620 C690 586 760 558 835 590 C920 626 985 672 1085 706 C1175 737 1248 742 1335 770" />
+            <path class="stream-light" d="M330 215 C420 248 478 298 445 345 C405 400 360 432 392 488 C420 540 480 548 450 600 C430 638 500 650 590 620 C690 586 760 558 835 590 C920 626 985 672 1085 706 C1175 737 1248 742 1335 770" />
+          </svg>
+
+          <img class="bridge bridge-manor" src="/static/assets/environment/storybook-bridge.svg" alt="" aria-hidden="true" />
+          <img class="bridge bridge-library" src="/static/assets/environment/storybook-bridge.svg" alt="" aria-hidden="true" />
+
+          <svg class="path-layer" viewBox="0 0 1400 900" aria-hidden="true">
+            <g class="trail trail-shadow">
+              <path d="M310 710 C350 665 405 625 448 585 C475 550 500 505 532 459" />
+              <path d="M532 459 C600 470 680 490 784 486" />
+              <path d="M784 486 C850 405 930 312 1050 220" />
+              <path d="M784 486 C808 525 830 560 854 600 C910 645 980 685 1050 710" />
+              <path d="M532 459 C490 420 470 375 448 333 C410 290 365 252 315 230" />
+            </g>
+            <g class="trail trail-main">
+              <path d="M310 710 C350 665 405 625 448 585 C475 550 500 505 532 459" />
+              <path d="M532 459 C600 470 680 490 784 486" />
+              <path d="M784 486 C850 405 930 312 1050 220" />
+              <path d="M784 486 C808 525 830 560 854 600 C910 645 980 685 1050 710" />
+              <path d="M532 459 C490 420 470 375 448 333 C410 290 365 252 315 230" />
+            </g>
+          </svg>
+          <svg id="route-layer" class="route-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
+
+          <div id="forest-decor" class="forest-decor" aria-hidden="true"></div>
+          <div id="prop-layer" class="prop-layer" aria-hidden="true"></div>
+          <div class="garden-beds" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          <div class="direction-sign" aria-hidden="true"><span>Manor ←</span><span>Barn ↗</span><span>Library ↘</span></div>
+
+          <div id="buildings"></div>
+          <div id="agents"></div>
+        </div>
+
+        <aside class="hud-tasks" aria-label="Current tasks">
+          <div class="hud-title"><span>Tasks</span><strong id="hud-task-count">0</strong></div>
+          <div id="hud-task-list" class="hud-task-list"><p class="hud-empty">No active project.</p></div>
+        </aside>
+
+        <aside id="approval-banner" class="approval-banner" aria-live="polite" hidden></aside>
+
+        <aside id="building-panel" class="building-panel" aria-live="polite">
+          <div class="building-panel-kicker">Campus Location</div>
+          <h3>Select a location</h3>
+          <p>Click a labeled campus location to inspect who is there and what work is underway.</p>
+        </aside>
+
+        <section id="hud-drawer" class="hud-drawer" aria-live="polite" aria-modal="false" hidden>
+          <div class="drawer-head"><div><span id="drawer-kicker">Campus</span><h3 id="drawer-title">Panel</h3></div><button id="drawer-close" type="button" aria-label="Close panel">×</button></div>
+          <div id="drawer-body" class="drawer-body" tabindex="0" aria-label="Scrollable panel content"></div>
+          <div class="drawer-scroll-hint" aria-hidden="true">Scroll for more · Esc closes</div>
+        </section>
+
+        <nav class="bottom-nav" aria-label="Campus navigation">
+          <button type="button" data-panel="map" class="active"><span>⌂</span>Map</button>
+          <button type="button" data-panel="briefing"><span>◆</span>Briefing</button>
+          <button type="button" data-panel="calendar"><span>▣</span>Calendar</button>
+          <button type="button" data-panel="people"><span>♟</span>People</button>
+          <button type="button" data-panel="grants"><span>◇</span>Grants</button>
+          <button type="button" data-panel="projects"><span>▤</span>Projects</button>
+          <button type="button" data-panel="repository"><span>▰</span>Repository</button>
+          <button type="button" data-panel="library"><span>▦</span>Library</button>
+          <button type="button" data-panel="environment"><span>☁</span>Weather</button>
+          <button type="button" data-panel="memory"><span>◈</span>Memory</button>
+          <button type="button" data-panel="playbooks"><span>☷</span>Playbooks</button>
+          <button type="button" data-panel="programs"><span>▥</span>Programs</button>
+          <button type="button" data-panel="research"><span>⌕</span>Research</button>
+          <button type="button" data-panel="approvals"><span>✓</span>Approvals <b id="approval-count">0</b></button>
+        </nav>
+      </div>
+      <form id="campus-ask-form" class="command-card campus-ask-card">
+        <div class="command-copy">
+          <div class="section-kicker">ASK THE CAMPUS</div>
+          <label for="campus-question">What do you need help with?</label>
+          <p>Ask a question, request help, check today, talk to a specialist, or describe a possible project. Nothing becomes a project unless you explicitly choose to create one.</p>
+        </div>
+        <div class="campus-ask-inputs">
+          <label class="campus-agent-select">Talk to
+            <select id="campus-agent" name="agent">
+              <option value="auto" selected>Auto — route to the right person</option>
+              <option value="stella">Stella — Chief of Staff</option>
+              <option value="percy">Percy — Programs & Education</option>
+              <option value="rose">Rose — Research & Archives</option>
+              <option value="stewart">Stewart — Land Steward</option>
+              <option value="vernadette">Vernadette — Grants & Development</option>
+              <option value="poe">Poe — Operations & Volunteers</option>
+            </select>
+          </label>
+          <textarea id="campus-question" rows="3" maxlength="2500" placeholder="What should I focus on today?"></textarea>
+          <div class="campus-ask-shortcuts" aria-label="Ask the Campus shortcuts">
+            <button type="button" data-campus-example="What should I focus on today?">Today</button>
+            <button type="button" data-campus-example="What does the weather look like tomorrow?">Weather</button>
+            <button type="button" data-campus-example="Poe, show me my volunteer hours this month.">Hours</button>
+            <button type="button" data-campus-example="Vernadette, what grants are due this month?">Grants</button>
+            <button type="button" data-open-panel="projects">Projects</button>
+          </div>
+        </div>
+        <div class="command-actions">
+          <button id="campus-ask-btn" class="button-primary" type="submit">Ask</button>
+          <button id="campus-ask-clear" class="button-quiet" type="button">Clear conversation</button>
+          <span id="command-note">Auto routes to the right staff member. Follow-up questions stay with the same specialist when appropriate. Ctrl+Enter sends.</span>
+        </div>
+        <div id="campus-ask-response" class="campus-ask-response" hidden aria-live="polite"></div>
+      </form>
+    </section>
+
+
+    <aside class="dashboard-rail right-rail" aria-label="Executive status">
+      <section class="victorian-panel approval-rail-panel">
+        <header><span id="approval-rail-title">Approval Ready</span><small id="approval-rail-subtitle">Human gate</small></header>
+        <div id="right-approval-card" class="right-approval-card">
+          <div class="right-empty">No approvals waiting.</div>
+        </div>
+      </section>
+
+      <section class="victorian-panel ai-connection-panel">
+        <header><span>AI Providers</span><small>Role routing</small></header>
+        <div class="ai-connection-body">
+          <div class="provider-connection-card" data-provider-card="gemini">
+            <div class="ai-connection-state">
+              <span id="gemini-status-dot" class="ai-status-dot"></span>
+              <span><strong id="gemini-connection-text">Checking Gemini…</strong><small id="gemini-model">—</small></span>
+            </div>
+            <button id="gemini-test-btn" type="button" class="rail-wide-button ai-test-button">Test Gemini</button>
+            <p id="gemini-test-result" class="ai-test-result">No project data is sent by the connection test.</p>
+          </div>
+
+          <div class="provider-connection-card" data-provider-card="openai">
+            <div class="ai-connection-state">
+              <span id="openai-status-dot" class="ai-status-dot"></span>
+              <span><strong id="openai-connection-text">Checking OpenAI…</strong><small id="openai-model">—</small></span>
+            </div>
+            <button id="openai-test-btn" type="button" class="rail-wide-button ai-test-button">Test OpenAI</button>
+            <p id="openai-test-result" class="ai-test-result">No project data is sent by the connection test.</p>
+          </div>
+
+          <div class="provider-routing">
+            <strong>AI-routed roles</strong>
+            <div class="rail-stat"><span>Stella</span><b id="route-chief">—</b></div>
+            <div class="rail-stat"><span>Rose</span><b id="route-research">—</b></div>
+            <div class="rail-stat"><span>Percy</span><b id="route-programs">—</b></div>
+            <div class="rail-stat"><span>Stewart</span><b id="route-caretaker">—</b></div>
+          </div>
+
+          <div class="ai-control-box">
+            <div class="ai-control-heading">
+              <strong>AI Control</strong>
+              <span id="ai-control-badge" class="ai-control-badge">Checking…</span>
+            </div>
+
+            <div class="rail-stat"><span>Calls today</span><strong id="ai-call-count">0</strong></div>
+            <div class="rail-stat"><span>Est. tokens today</span><strong id="ai-token-count">0</strong></div>
+            <div class="rail-stat"><span>Est. OpenAI list price</span><strong id="ai-cost-today">$0.0000</strong></div>
+
+            <label class="ai-budget-label" for="ai-budget-input">Daily estimate guardrail</label>
+            <div class="ai-budget-row">
+              <span>$</span>
+              <input id="ai-budget-input" type="number" min="0" max="1000" step="0.05" value="1.00" inputmode="decimal" />
+              <button id="ai-budget-save" type="button">Save</button>
+            </div>
+            <small class="ai-budget-help">$0 disables the cost-limit guardrail. Estimates are not billing records.</small>
+
+            <button id="ai-stop-btn" type="button" class="rail-wide-button ai-stop-button">Emergency Stop AI</button>
+            <button type="button" class="rail-wide-button" data-open-panel="ai_activity">AI Activity & Cost</button>
+          </div>
+
+          <p id="ai-authority-text" class="ai-test-result">Multi-provider routing · no automatic fallback.</p>
+        </div>
+      </section>
+
+      <section class="victorian-panel overview-panel">
+        <header><span>Campus Overview</span><small>Live</small></header>
+        <div class="rail-stat"><span>Active projects</span><strong id="overview-projects">0</strong></div>
+        <div class="rail-stat"><span>Open tasks</span><strong id="overview-tasks">0</strong></div>
+        <div class="rail-stat"><span>Approvals pending</span><strong id="overview-approvals">0</strong></div>
+        <div class="rail-stat"><span>Project outputs</span><strong id="overview-outputs">0</strong></div>
+        <div class="rail-stat"><span>Repository files</span><strong id="overview-repository">0</strong></div>
+        <div class="rail-stat"><span>People Ledger</span><strong id="overview-people">0</strong></div>
+        <div class="rail-stat system-health-stat"><span>System health</span><strong id="system-health">Checking…</strong></div>
+      </section>
+    </aside>
+
+
+    <section class="detail-grid">
+      <section class="detail-card">
+        <div class="detail-head"><div><div class="section-kicker">PROJECT</div><h2>Project & Tasks</h2><small class="detail-helper">Scrolls independently</small></div><span class="detail-badge" id="project-badge">Idle</span></div>
+        <div id="project-summary" class="project-summary empty-state">No active project.</div>
+        <div id="task-list" class="task-list"></div>
+      </section>
+      <section class="detail-card">
+        <div class="detail-head"><div><div class="section-kicker">TRACE</div><h2>Activity Log</h2><small class="detail-helper">Scrolls independently</small></div><span class="detail-badge">Live</span></div>
+        <div id="activity-list" class="activity-list"></div>
+      </section>
+    </section>
+  </main>
+
+
+  <div id="concept-modal" class="concept-modal" hidden aria-hidden="true">
+    <div class="concept-modal-backdrop" data-close-concept></div>
+    <section class="concept-modal-panel" role="dialog" aria-modal="true" aria-labelledby="concept-modal-title">
+      <header>
+        <div><span class="section-kicker">CONCEPT ART</span><h2 id="concept-modal-title">Mavis Digital Campus</h2></div>
+        <button id="concept-modal-close" type="button" aria-label="Close concept art">×</button>
+      </header>
+      <div class="concept-modal-body">
+        <img id="concept-modal-image" alt="" />
+      </div>
+    </section>
+  </div>
+
+  <div id="deliverable-modal" class="deliverable-modal" hidden aria-hidden="true">
+    <div class="deliverable-modal-backdrop" data-close-deliverable></div>
+    <section class="deliverable-modal-panel" role="dialog" aria-modal="true" aria-labelledby="deliverable-modal-title">
+      <header class="deliverable-modal-head">
+        <div>
+          <span class="section-kicker">PROJECT OUTPUT</span>
+          <h2 id="deliverable-modal-title">Deliverable</h2>
+          <small id="deliverable-modal-meta"></small>
+        </div>
+        <button id="deliverable-modal-close" type="button" aria-label="Close project output">×</button>
+      </header>
+      <div class="deliverable-toolbar" aria-label="Deliverable actions">
+        <button id="deliverable-copy" type="button">Copy</button>
+        <button id="deliverable-remember" type="button">Remember</button>
+        <button id="deliverable-download-md" type="button">Download .md</button>
+        <button id="deliverable-download-txt" type="button">Download .txt</button>
+        <button id="deliverable-print" type="button">Print / Save PDF</button>
+      </div>
+      <article id="deliverable-modal-body" class="deliverable-modal-body" tabindex="0"></article>
+    </section>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/static/js/app.js?v=08742"></script>
+</body>
+</html>

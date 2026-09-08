@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 48" shape-rendering="crispEdges">
+<defs>
+  <g id="frame">
+    <!-- bun/updo -->
+    <rect x="9" y="1" width="14" height="5" fill="#56372c"/>
+    <rect x="6" y="5" width="20" height="9" fill="#4a3028"/>
+    <rect x="4" y="8" width="6" height="8" fill="#4a3028"/>
+    <rect x="22" y="8" width="6" height="8" fill="#4a3028"/>
+    <rect x="11" y="0" width="10" height="3" fill="#624035"/>
+    <!-- face -->
+    <rect x="9" y="8" width="14" height="12" fill="#d5a06f"/>
+    <rect x="11" y="12" width="3" height="2" fill="#3a2923"/>
+    <rect x="18" y="12" width="3" height="2" fill="#3a2923"/>
+    <rect x="15" y="16" width="3" height="1" fill="#9a5f4c"/>
+    <!-- cream blouse -->
+    <rect x="6" y="20" width="21" height="14" fill="#eadcc4"/>
+    <rect x="4" y="23" width="4" height="11" fill="#eadcc4"/>
+    <rect x="26" y="23" width="4" height="11" fill="#eadcc4"/>
+    <!-- burgundy vest -->
+    <rect x="9" y="20" width="15" height="15" fill="#7a3340"/>
+    <rect x="12" y="20" width="9" height="4" fill="#8c4050"/>
+    <!-- green neck tie -->
+    <rect x="14" y="20" width="5" height="8" fill="#31513c"/>
+    <rect x="12" y="22" width="9" height="3" fill="#31513c"/>
+    <!-- dark skirt/trousers -->
+    <rect x="8" y="34" width="18" height="8" fill="#2c2c2f"/>
+    <rect x="8" y="39" width="7" height="5" fill="#29292c"/>
+    <rect x="19" y="39" width="7" height="5" fill="#29292c"/>
+    <!-- boots -->
+    <rect x="6" y="43" width="10" height="4" fill="#5a3826"/>
+    <rect x="19" y="43" width="10" height="4" fill="#5a3826"/>
+    <!-- satchel -->
+    <rect x="26" y="28" width="5" height="10" fill="#6a4931"/>
+    <rect x="27" y="30" width="4" height="5" fill="#ad8150"/>
+    <!-- clipboard -->
+    <rect x="2" y="25" width="5" height="9" fill="#7d5a38"/>
+    <rect x="3" y="26" width="4" height="6" fill="#d5c39b"/>
+  </g>
+</defs>
+<g transform="translate(0 0)">
+  <use href="#frame"/>
+  <rect x="8" y="38" width="7" height="6" fill="#29292c"/>
+  <rect x="20" y="40" width="7" height="4" fill="#29292c"/>
+</g>
+<g transform="translate(32 1)">
+  <use href="#frame"/>
+  <rect x="7" y="40" width="7" height="4" fill="#29292c"/>
+  <rect x="20" y="37" width="7" height="7" fill="#29292c"/>
+</g>
+<g transform="translate(64 0)">
+  <use href="#frame"/>
+  <rect x="8" y="38" width="7" height="6" fill="#29292c"/>
+  <rect x="20" y="40" width="7" height="4" fill="#29292c"/>
+</g>
+<g transform="translate(96 1)">
+  <use href="#frame"/>
+  <rect x="7" y="40" width="7" height="4" fill="#29292c"/>
+  <rect x="20" y="37" width="7" height="7" fill="#29292c"/>
+</g>
+</svg>

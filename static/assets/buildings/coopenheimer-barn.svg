@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 190" shape-rendering="crispEdges">
+  <ellipse cx="140" cy="174" rx="123" ry="11" fill="#22372a" opacity=".42"/>
+  <rect x="30" y="76" width="220" height="88" fill="#5b3a2d" stroke="#35271f" stroke-width="6"/>
+  <path d="M12 83 49 39 93 18h94l44 21 37 44Z" fill="#3c3732" stroke="#2b2825" stroke-width="7"/>
+  <path d="M28 78h225" stroke="#8b6645" stroke-width="4"/>
+  <rect x="116" y="6" width="48" height="43" fill="#5b5045" stroke="#312c27" stroke-width="5"/>
+  <path d="m108 10 32-20 33 20Z" fill="#35302c" stroke="#292522" stroke-width="4"/>
+  <rect x="92" y="96" width="96" height="68" fill="#3c271f" stroke="#a67a4f" stroke-width="5"/>
+  <path d="M95 99 185 160M185 99 95 160" stroke="#9f744b" stroke-width="5"/>
+  <rect x="45" y="96" width="31" height="28" fill="#8ea19a" stroke="#3b2a22" stroke-width="4"/>
+  <rect x="205" y="96" width="28" height="28" fill="#8ea19a" stroke="#3b2a22" stroke-width="4"/>
+  <g stroke="#79503b" stroke-width="4" opacity=".72">
+    <path d="M36 88h215M36 111h54M190 111h56M36 137h54M190 137h56M36 157h54M190 157h56"/>
+  </g>
+  <rect x="65" y="49" width="150" height="34" fill="#33271f" stroke="#b48c55" stroke-width="3"/>
+  <text x="140" y="63" text-anchor="middle" font-family="Georgia,serif" font-size="12" font-weight="700" fill="#ecd8a5">COOPENHEIMER BARN</text>
+  <text x="140" y="76" text-anchor="middle" font-family="Georgia,serif" font-size="8" fill="#d5b77b">PROGRAMS • EDUCATION • EXPERIENCE</text>
+  <text x="61" y="143" text-anchor="middle" font-family="Georgia,serif" font-size="9" font-weight="700" fill="#d8c69e">TEACH</text>
+  <text x="219" y="143" text-anchor="middle" font-family="Georgia,serif" font-size="9" font-weight="700" fill="#d8c69e">LEARN</text>
+  <rect x="244" y="80" width="17" height="75" rx="7" fill="#6c5840" stroke="#3a2e23" stroke-width="4"/>
+  <path d="M244 88h17M244 103h17M244 118h17M244 133h17" stroke="#8b754f" stroke-width="2"/>
+  <g fill="#d2a63e"><circle cx="43" cy="160" r="4"/><circle cx="54" cy="157" r="3"/><circle cx="226" cy="158" r="4"/><circle cx="238" cy="155" r="3"/></g>
+  <g fill="#6d914b"><rect x="38" y="160" width="21" height="6"/><rect x="221" y="159" width="24" height="6"/></g>
+</svg>

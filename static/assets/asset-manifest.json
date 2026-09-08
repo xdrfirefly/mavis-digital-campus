@@ -1,0 +1,646 @@
+{
+  "build": "v0.8.7.4.2",
+  "runtime_ai": false,
+  "canonical_assets": {
+    "chief_of_staff": {
+      "canonical_version": 3,
+      "master_sheet": "/static/assets/agents/chief-of-staff/master-sheet.png",
+      "portrait": "/static/assets/agents/chief-of-staff/portrait.jpg",
+      "map_sprite": "/static/assets/agents/chief-of-staff/map-sprite.png",
+      "status": "approved-concept-derived-v0.6.3"
+    },
+    "coopenheimer_barn": {
+      "canonical_version": 3,
+      "master_sheet": "/static/assets/buildings/coopenheimer-barn/master-sheet.png",
+      "hero": "/static/assets/buildings/coopenheimer-barn/hero.jpg",
+      "map_sprite": "/static/assets/buildings/coopenheimer-barn/map-sprite.png",
+      "status": "storybook-building-pass-v0.6.9",
+      "medium_sprite": "/static/assets/buildings/coopenheimer-barn/medium-sprite.png"
+    },
+    "programs": {
+      "canonical_version": 1,
+      "master_sheet": "/static/assets/agents/programs/master-sheet.png",
+      "portrait": "/static/assets/agents/programs/portrait.jpg",
+      "map_sprite": "/static/assets/agents/programs/map-sprite.png",
+      "status": "approved-concept-derived-v0.6.4"
+    },
+    "research": {
+      "canonical_version": 1,
+      "master_sheet": "/static/assets/agents/research/master-sheet.png",
+      "portrait": "/static/assets/agents/research/portrait.jpg",
+      "map_sprite": "/static/assets/agents/research/map-sprite.png",
+      "status": "approved-concept-derived-v0.6.4"
+    },
+    "mavis_manor": {
+      "canonical_version": 1,
+      "master_sheet": "/static/assets/buildings/mavis-manor/master-sheet.png",
+      "hero": "/static/assets/buildings/mavis-manor/hero.jpg",
+      "medium_sprite": "/static/assets/buildings/mavis-manor/medium-sprite.png",
+      "map_sprite": "/static/assets/buildings/mavis-manor/map-sprite.png",
+      "status": "storybook-building-pass-v0.6.9"
+    },
+    "library_of_mavis": {
+      "canonical_version": 1,
+      "master_sheet": "/static/assets/buildings/library-of-mavis/master-sheet.png",
+      "hero": "/static/assets/buildings/library-of-mavis/hero.jpg",
+      "medium_sprite": "/static/assets/buildings/library-of-mavis/medium-sprite.png",
+      "map_sprite": "/static/assets/buildings/library-of-mavis/map-sprite.png",
+      "status": "storybook-building-pass-v0.6.9"
+    },
+    "caretaker": {
+      "canonical_version": 1,
+      "master_sheet": "/static/assets/agents/caretaker/master-sheet.png",
+      "portrait": "/static/assets/agents/caretaker/portrait.jpg",
+      "map_sprite": "/static/assets/agents/caretaker/map-sprite.png",
+      "status": "approved-concept-derived-v0.6.4"
+    },
+    "environment_world_pass": {
+      "canonical_version": 3,
+      "master_style": "storybook-campus",
+      "background": "/static/assets/environment/storybook-campus-world-pass.png",
+      "covers": [
+        "pond",
+        "fruit_forest",
+        "stream",
+        "grass",
+        "paths"
+      ],
+      "status": "north-pond-bridge-removed-v0.6.10",
+      "bridge_asset": "/static/assets/environment/storybook-bridge.svg",
+      "pond_connector_patch": true
+    }
+  },
+  "release_direction": {
+    "layout_authority": "existing campus geography",
+    "style_target": "clean polished mockup with tightly integrated assets",
+    "note": "Keep the current map layout. Push future visuals toward the cleaner cohesive style reference."
+  },
+  "ai_runtime": {
+    "enabled": true,
+    "providers": {
+      "gemini": {
+        "default_model": "gemini-3.5-flash-lite",
+        "connection_test": true
+      },
+      "openai": {
+        "default_model": "gpt-5.6-terra",
+        "api": "responses",
+        "connection_test": true,
+        "store": false
+      }
+    },
+    "default_role_routing": {
+      "chief": "gemini",
+      "research": "gemini",
+      "programs": "openai",
+      "caretaker": "gemini"
+    },
+    "automatic_provider_fallback": false,
+    "chief_execution": "real-planning-and-final-review",
+    "research_execution": "real-ai-routed",
+    "programs_execution": "real-ai-routed",
+    "caretaker_execution": "simulated",
+    "autonomous_web_research": false,
+    "human_approval_required": true,
+    "external_actions": false,
+    "secret_source": ".env",
+    "approved_plan_execution": true,
+    "structured_handoffs": {
+      "research_to_programs": true,
+      "research_and_programs_to_chief_review": true
+    },
+    "programs_structured_output": {
+      "provider": "openai",
+      "api": "responses",
+      "format": "json_schema",
+      "strict": true,
+      "max_output_tokens": 3600,
+      "fallback_for_non_structured_provider": "json-text-parser"
+    },
+    "chief_final_review": {
+      "enabled": true,
+      "default_provider": "gemini",
+      "artifact_table": "chief_review_artifacts",
+      "same_provider_json_repair_attempt": true,
+      "human_approval_after_review": true
+    },
+    "executive_decision_routing": {
+      "enabled": true,
+      "chief_recommendations": [
+        "approve_internal",
+        "revise",
+        "hold"
+      ],
+      "needs_me_categories": [
+        "ready_to_approve",
+        "revision_recommended",
+        "hold_recommended",
+        "plan_approvals",
+        "revision_plan_approval",
+        "needs_revision",
+        "blocked_tasks"
+      ],
+      "automatic_decision": false,
+      "human_authority": true
+    },
+    "activity_cost_controls": {
+      "enabled": true,
+      "project_attribution": true,
+      "task_attribution": true,
+      "token_estimate_method": "characters_divided_by_4",
+      "openai_list_price_source_date": "2026-08-30",
+      "openai_prices_per_million": {
+        "gpt-5.6-sol": {
+          "input": 4.0,
+          "output": 20.0
+        },
+        "gpt-5.6-terra": {
+          "input": 2.0,
+          "output": 12.0
+        },
+        "gpt-5.6-luna": {
+          "input": 0.2,
+          "output": 1.2
+        }
+      },
+      "default_daily_estimated_cost_limit_usd": 1.0,
+      "zero_disables_guardrail": true,
+      "guardrail_scope": "openai_estimated_list_price",
+      "actual_billing_known": false,
+      "emergency_stop_new_calls": true,
+      "inflight_request_may_finish": true,
+      "resume_restarts_interrupted_workflow": false
+    },
+    "stabilization_recovery": {
+      "enabled": true,
+      "workflow_journal_table": "workflow_runs",
+      "schema_metadata_table": "schema_meta",
+      "schema_version": "0.8.7.4.2",
+      "detect_active_workflow_on_restart": true,
+      "explicit_human_retry_required": true,
+      "preserve_completed_tasks_on_retry": true,
+      "preserve_saved_artifacts_on_retry": true,
+      "blocked_and_in_progress_reset_to_waiting_on_retry": true,
+      "duplicate_final_approval_protection": true,
+      "startup_missing_approval_repair": true,
+      "durable_human_gate_states_preserved": true,
+      "graceful_shutdown_awaits_cancelled_workflow": true,
+      "automatic_retry": false,
+      "automatic_external_action": false
+    },
+    "project_outputs": {
+      "enabled": true,
+      "deliverables_table": "deliverables",
+      "chief_expected_deliverables": true,
+      "expected_deliverables_column": "chief_plans.expected_deliverables_json",
+      "local_assembly_without_extra_ai_calls": true,
+      "research_outputs": [
+        "research_brief",
+        "verification_checklist"
+      ],
+      "programs_outputs": [
+        "program_plan",
+        "lesson_plan",
+        "facilitator_guide",
+        "materials_list",
+        "participant_handout"
+      ],
+      "caretaker_outputs": [
+        "grounds_brief",
+        "maintenance_checklist",
+        "project_proposal"
+      ],
+      "chief_outputs": [
+        "executive_summary",
+        "decision_memo"
+      ],
+      "chief_reviews_actual_deliverables": true,
+      "versions_enabled": true,
+      "initial_version": 1,
+      "human_final_approval_marks_outputs_approved": true,
+      "changes_preserve_outputs": true,
+      "browser_exports": [
+        "markdown",
+        "text",
+        "print_save_pdf"
+      ],
+      "copy_to_clipboard": true,
+      "additional_formatting_ai_calls": false
+    },
+    "revision_loop": {
+      "enabled": true,
+      "revision_requests_table": "revision_requests",
+      "revision_plans_table": "revision_plans",
+      "planner": "chief-real-ai-routed",
+      "planner_operation": "chief_revision_plan",
+      "same_provider_json_repair_attempt": true,
+      "human_revision_instruction": true,
+      "explicit_human_plan_request": true,
+      "human_revision_plan_approval": true,
+      "select_existing_tasks_only": true,
+      "select_existing_deliverable_keys_only": true,
+      "automatic_final_chief_rerun": true,
+      "preserve_unselected_tasks": true,
+      "preserve_unselected_outputs": true,
+      "new_version_only_for_revision_queued_outputs": true,
+      "previous_versions_readable": true,
+      "source_task_consistency_guard": true,
+      "automatic_revision_execution": false,
+      "external_actions": false,
+      "automatic_provider_fallback": false
+    }
+  },
+  "ui_runtime": {
+    "drawer_scroll": {
+      "dedicated_scroll_body": true,
+      "preserve_scroll_on_live_refresh": true,
+      "reset_on_panel_change": true,
+      "map_wheel_interception_fixed": true,
+      "escape_closes": true
+    }
+  },
+  "project_repository": {
+    "enabled": true,
+    "table": "project_files",
+    "root_directory": "repository",
+    "auto_file_deliverables_as_markdown": true,
+    "startup_sync_existing_deliverables": true,
+    "manual_rescan": true,
+    "supported_file_kinds": [
+      "pdf",
+      "slides",
+      "document",
+      "spreadsheet",
+      "image",
+      "text",
+      "archive",
+      "other"
+    ],
+    "project_files_tab": true,
+    "top_level_repository": true,
+    "previous_versions_retained": true,
+    "path_traversal_protection": true,
+    "additional_ai_calls": false
+  },
+  "workspace_readability": {
+    "enabled": true,
+    "side_rails_sticky": false,
+    "prevents_lower_panel_overlap": true,
+    "larger_task_results": true,
+    "larger_activity_log": true,
+    "focus_workspace_toggle": true,
+    "focus_preference_local_browser": true,
+    "responsive_stack": true
+  },
+  "institutional_memory": {
+    "enabled": true,
+    "table": "institutional_memory",
+    "memory_types": [
+      "Decision",
+      "Fact",
+      "Policy",
+      "Lesson",
+      "Preference",
+      "Context"
+    ],
+    "importance_levels": [
+      "Core",
+      "Normal"
+    ],
+    "statuses": [
+      "Active",
+      "Archived"
+    ],
+    "scopes": [
+      "institution-wide",
+      "project"
+    ],
+    "human_curated": true,
+    "active_memory_available_to_ai_roles": [
+      "chief",
+      "research",
+      "programs",
+      "chief_final_review",
+      "chief_revision_plan"
+    ],
+    "prompt_limit_entries": 12,
+    "project_memory_preferred": true,
+    "archived_memory_sent_to_ai": false,
+    "current_human_instruction_precedence": true,
+    "survives_demo_reset": true,
+    "google_calendar_integration": false,
+    "capture_from_notes": true,
+    "capture_from_deliverables": true,
+    "captured_source_provenance": true,
+    "duplicate_source_capture_guard": true,
+    "human_editing": true,
+    "source_provenance_preserved_on_edit": true,
+    "review_governance": true,
+    "review_intervals_days": [
+      0,
+      90,
+      180,
+      365
+    ],
+    "review_due_filter": true,
+    "mark_reviewed": true,
+    "supersede_with_history": true,
+    "active_superseded_memory_sent_to_ai": false
+  },
+  "version": "0.8.7.4.2",
+  "institutional_playbooks": {
+    "enabled": true,
+    "table": "playbooks",
+    "statuses": [
+      "Draft",
+      "Active",
+      "Archived"
+    ],
+    "scopes": [
+      "institution-wide",
+      "project"
+    ],
+    "human_authored": true,
+    "active_playbooks_available_to_ai_roles": [
+      "chief",
+      "chief_revision_plan",
+      "chief_final_review"
+    ],
+    "draft_or_archived_sent_to_ai": false,
+    "prompt_limit_entries": 6,
+    "current_human_instruction_precedence": true,
+    "external_action_authority": false,
+    "survives_demo_reset": true,
+    "google_calendar_integration": false
+  },
+  "executive_briefing": {
+    "enabled": true,
+    "source": "deterministic_local_state",
+    "additional_ai_calls": 0,
+    "snapshot_table": "briefing_snapshots",
+    "manual_snapshot": true,
+    "snapshots_survive_demo_reset": true,
+    "includes": [
+      "daily_steward",
+      "human_attention",
+      "project_pulse",
+      "memory_review_due",
+      "active_playbooks",
+      "ai_controls",
+      "recent_completed_tasks",
+      "recent_outputs"
+    ],
+    "automatic_email": false,
+    "automatic_calendar": false,
+    "scheduled_delivery": false,
+    "google_calendar_integration": false,
+    "human_authority": true
+  },
+  "library_foundation": {
+    "enabled": true,
+    "phase": "programs_auto_archive",
+    "tables": [
+      "library_collections",
+      "library_materials",
+      "library_material_index",
+      "library_inbox",
+      "programs_library_preflights",
+      "program_archive_events"
+    ],
+    "separate_from_project_repository": true,
+    "survives_demo_reset": true,
+    "local_only": true,
+    "additional_ai_calls": 0,
+    "web_access": false,
+    "uploads_enabled": true,
+    "cataloging_desk_enabled": true,
+    "librarian_agent_enabled": true,
+    "search_enabled": true,
+    "program_auto_archive_enabled": true,
+    "catalog_enabled": true,
+    "catalog_search_enabled": true,
+    "librarian_retrieval_enabled": true,
+    "incoming_materials_enabled": true,
+    "upload_storage": "library/inbox",
+    "sha256_deduplication": true,
+    "max_file_bytes": 104857600,
+    "trusted_material_file_access_enabled": true,
+    "trusted_storage": "library/catalog",
+    "human_approval_required": true,
+    "librarian_web_access": false,
+    "librarian_trusted_library_only": true,
+    "librarian_incoming_materials_excluded": true,
+    "librarian_mode": "deterministic_local_metadata_and_document_text_retrieval",
+    "external_research_handoff_recommended_when_insufficient": true,
+    "programs_library_first_enabled": true,
+    "programs_library_first_human_choice": true,
+    "programs_library_first_web_access": false,
+    "programs_reuse_without_ai": true,
+    "programs_revision_uses_catalog_metadata_only": false,
+    "local_document_indexing_enabled": true,
+    "local_document_indexing_web_access": false,
+    "local_document_indexing_ai_calls": 0,
+    "program_auto_archive_final_human_approval_only": true,
+    "program_auto_archive_web_access": false,
+    "program_auto_archive_ai_calls": 0,
+    "indexed_file_types": [
+      "PDF text",
+      "DOCX",
+      "PPTX",
+      "XLSX",
+      "TXT/MD/CSV/JSON/XML/HTML"
+    ],
+    "scanned_pdf_ocr_enabled": false,
+    "programs_revision_uses_trusted_indexed_text": true
+  },
+  "future_planning_context": {
+    "calendar": "internal_calendar_enabled_google_deferred",
+    "local_weather": "live_pws_with_open_meteo_fallback",
+    "seasonal_awareness": "local_enabled",
+    "automatic_rescheduling": false,
+    "goal": "Combine calendar, local weather, seasonal context, projects, and institutional knowledge for day/week planning."
+  },
+  "weather_seasons": {
+    "enabled": true,
+    "phase": "weather_seasons_pws",
+    "primary_station_id": "KWFLATT11",
+    "primary_station_provider": "Weather Underground / The Weather Company",
+    "pws_api_key_required_for_direct_readings": true,
+    "forecast_provider": "Open-Meteo",
+    "fallback_current_provider": "Open-Meteo",
+    "weather_network_access": true,
+    "librarian_network_access": false,
+    "additional_ai_calls": 0,
+    "calendar_integration_enabled": false,
+    "automatic_rescheduling_enabled": false,
+    "pond_weather_widget_enabled": true,
+    "pond_weather_widget_click_opens_weather": true,
+    "moon_cycle_enabled": true,
+    "moon_cycle_source": "local_mean_synodic_cycle",
+    "moon_cycle_network_access": false,
+    "moon_cycle_ai_calls": 0,
+    "moon_phase_fields": [
+      "phase",
+      "icon",
+      "illumination_pct",
+      "age_days",
+      "next_full_moon",
+      "next_new_moon"
+    ]
+  },
+  "agent_identity_layer": {
+    "status": "canonical-display-names-active",
+    "stable_internal_ids_preserved": true,
+    "active_staff": {
+      "chief": {
+        "name": "Stella",
+        "title": "Chief of Staff"
+      },
+      "programs": {
+        "name": "Percy",
+        "title": "Director of Programs & Education"
+      },
+      "research": {
+        "name": "Rose",
+        "title": "Director of Research & Archives"
+      },
+      "caretaker": {
+        "name": "Stewart",
+        "title": "Land Steward"
+      },
+      "operations": {
+        "name": "Poe",
+        "title": "Operations & Volunteer Coordinator"
+      },
+      "grants": {
+        "name": "Vernadette",
+        "title": "Grants & Development Officer"
+      }
+    },
+    "deferred_staff": {}
+  },
+  "operations_foundation": {
+    "version": "0.8.6.9.5",
+    "agent_id": "operations",
+    "agent_name": "Poe",
+    "role": "Operations & Volunteer Coordinator",
+    "people_ledger": true,
+    "work_sessions": true,
+    "clock_in_out": true,
+    "participation_types": [
+      "Volunteer",
+      "Learning",
+      "Paid"
+    ],
+    "activity_taxonomy": true,
+    "audit_trail": true,
+    "natural_language_commands": true,
+    "medicaid_rules_engine": false,
+    "grant_reporting_rules": false,
+    "paid_payroll": false,
+    "provisional_visual": "css_black_purple_blue_eyes",
+    "canonical_sprite_pending": true,
+    "natural_language_parser": "deterministic_local",
+    "natural_language_ai_calls": 0,
+    "natural_language_web_calls": 0,
+    "primary_person_alias": true,
+    "manual_duration_entries": true,
+    "manual_duration_exact_times_invented": false,
+    "report_questions": true
+  },
+  "canonical_staff": {},
+  "grants_foundation": {
+    "version": "0.8.7",
+    "agent_id": "grants",
+    "agent_name": "Vernadette",
+    "role": "Grants & Development Officer",
+    "manual_opportunity_intake": true,
+    "pipeline_tracking": true,
+    "project_links": true,
+    "deadline_briefing": true,
+    "assessment_fields": [
+      "mission_fit",
+      "workload",
+      "restrictions",
+      "strategic_value"
+    ],
+    "recommendations": [
+      "Pursue",
+      "Review",
+      "Pass"
+    ],
+    "automatic_web_discovery": false,
+    "automatic_submission": false,
+    "additional_ai_calls": 0,
+    "live_federal_discovery": true,
+    "automatic_background_discovery": false
+  },
+  "daily_steward": {
+    "enabled": true,
+    "phase": "calendar_aware_internal_coordination",
+    "agent_id": "chief",
+    "agent_name": "Stella",
+    "source": "deterministic_local_state",
+    "additional_ai_calls": 0,
+    "max_focus_items": 3,
+    "inputs": [
+      "approvals",
+      "projects_and_tasks",
+      "internal_calendar",
+      "weather_and_season",
+      "grant_deadlines",
+      "poe_work_sessions",
+      "institutional_memory_review"
+    ],
+    "calendar_connected": true,
+    "plant_phenology_records": false,
+    "automatic_rescheduling": false,
+    "external_actions": false,
+    "natural_language_daily_focus": true,
+    "endpoint": "/api/stella/daily",
+    "attention_protection": true,
+    "calendar_source": "Campus internal calendar",
+    "google_calendar_connected": false,
+    "adaptive_focus_cap": true
+  },
+  "calendar_foundation": {
+    "enabled": true,
+    "version": "0.8.7.1",
+    "table": "events",
+    "source": "Campus internal calendar",
+    "manual_create_edit": true,
+    "today_tomorrow_week_views": true,
+    "project_links": true,
+    "commitment_levels": [
+      "Light",
+      "Normal",
+      "Major"
+    ],
+    "event_types": [
+      "Personal",
+      "Institute",
+      "Class / Program",
+      "Farm",
+      "Deadline",
+      "Meeting",
+      "Other"
+    ],
+    "survives_demo_reset": true,
+    "google_calendar_connected": false,
+    "external_actions": false,
+    "automatic_rescheduling": false,
+    "daily_steward_reads_calendar": true,
+    "additional_ai_calls": 0
+  },
+  "campus_cleanup": {
+    "version": "0.8.7.4.2",
+    "people_first_labels": true,
+    "internal_agent_ids_preserved": true,
+    "barn_home_anchor_separation": [
+      "programs",
+      "operations"
+    ],
+    "living_systems_map_ui": "compact_weather_and_moon_icons",
+    "project_command_label": "Ask the Campus"
+  }
+}

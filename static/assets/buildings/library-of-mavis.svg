@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 205 155" shape-rendering="crispEdges">
+  <ellipse cx="103" cy="143" rx="87" ry="9" fill="#283c2d" opacity=".42"/>
+  <rect x="31" y="67" width="143" height="68" fill="#c9bb9e" stroke="#554b3d" stroke-width="5"/>
+  <polygon points="18,72 101,20 187,72" fill="#415547" stroke="#354439" stroke-width="6"/>
+  <polygon points="63,53 101,15 139,53" fill="#4b6150" stroke="#354439" stroke-width="4"/>
+  <rect x="89" y="93" width="30" height="42" fill="#5d4437" stroke="#4f3c32" stroke-width="4"/>
+  <rect x="48" y="82" width="27" height="28" fill="#769c96" stroke="#564b3c" stroke-width="4"/>
+  <rect x="133" y="82" width="27" height="28" fill="#769c96" stroke="#564b3c" stroke-width="4"/>
+  <rect x="25" y="124" width="159" height="14" fill="#91785b" stroke="#574636" stroke-width="4"/>
+  <rect x="35" y="109" width="7" height="29" fill="#e7d8b9"/>
+  <rect x="166" y="109" width="7" height="29" fill="#e7d8b9"/>
+  <rect x="61" y="42" width="80" height="18" fill="#b89764" stroke="#514235" stroke-width="3"/>
+  <text x="101" y="55" text-anchor="middle" font-family="Georgia,serif" font-size="9" font-weight="700" fill="#34291f">LIBRARY OF MAVIS</text>
+  <rect x="80" y="27" width="42" height="21" fill="#c9bb9e" stroke="#554b3d" stroke-width="3"/>
+  <rect x="92" y="31" width="17" height="13" fill="#789e98"/>
+</svg>

@@ -1,0 +1,6 @@
+fastapi==0.128.2
+uvicorn[standard]==0.48.0
+
+pypdf==5.9.0
+
+tzdata>=2025.2

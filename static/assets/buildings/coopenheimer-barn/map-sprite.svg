@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 230" shape-rendering="crispEdges">
+  <ellipse cx="170" cy="215" rx="148" ry="11" fill="#213127" opacity=".45"/>
+
+  <!-- right-side education wing -->
+  <rect x="257" y="119" width="53" height="72" fill="#4c3328" stroke="#2b211c" stroke-width="5"/>
+  <path d="M247 121 L279 91 L321 121 Z" fill="#37332e" stroke="#292622" stroke-width="6"/>
+  <rect x="270" y="137" width="21" height="22" fill="#9ca69a" stroke="#382a22" stroke-width="4"/>
+  <rect x="294" y="139" width="11" height="49" fill="#34251f" stroke="#8e6445" stroke-width="3"/>
+
+  <!-- main barn mass -->
+  <rect x="37" y="91" width="238" height="106" fill="#56382c" stroke="#2e241e" stroke-width="7"/>
+  <path d="M17 100 L53 55 L101 28 L239 28 L287 55 L323 100 Z" fill="#37332e" stroke="#272522" stroke-width="8"/>
+  <path d="M35 96 L63 64 L111 40 L229 40 L277 64 L305 96" fill="none" stroke="#70563e" stroke-width="4"/>
+  <path d="M46 82 H294" stroke="#221f1c" stroke-width="4" opacity=".75"/>
+
+  <!-- cupola -->
+  <rect x="139" y="4" width="62" height="49" fill="#4e453a" stroke="#27231f" stroke-width="6"/>
+  <rect x="151" y="16" width="12" height="20" fill="#7e8f83" stroke="#2e2924" stroke-width="3"/>
+  <rect x="177" y="16" width="12" height="20" fill="#7e8f83" stroke="#2e2924" stroke-width="3"/>
+  <path d="M130 9 L170 -15 L210 9 Z" fill="#322d29" stroke="#24211f" stroke-width="5"/>
+  <rect x="168" y="-23" width="4" height="10" fill="#2c2925"/>
+  <path d="M170 -23 l11 5 -11 5 z" fill="#9e7a47"/>
+
+  <!-- canonical sign board -->
+  <rect x="67" y="61" width="205" height="43" fill="#2d241e" stroke="#b08954" stroke-width="4"/>
+  <text x="170" y="78" text-anchor="middle" font-family="Georgia,serif" font-size="15" font-weight="700" fill="#f0dba8">COOPENHEIMER BARN</text>
+  <text x="170" y="93" text-anchor="middle" font-family="Georgia,serif" font-size="9" font-weight="700" fill="#d5b876">PROGRAMS • EDUCATION • EXPERIENCE</text>
+
+  <!-- center doors / open teaching entry -->
+  <rect x="105" y="111" width="130" height="86" fill="#281d19" stroke="#956945" stroke-width="6"/>
+  <rect x="110" y="115" width="54" height="78" fill="#5e3b2b" stroke="#a07249" stroke-width="4"/>
+  <rect x="176" y="115" width="54" height="78" fill="#5e3b2b" stroke="#a07249" stroke-width="4"/>
+  <path d="M113 118 L161 190 M161 118 L113 190 M179 118 L227 190 M227 118 L179 190" stroke="#aa794d" stroke-width="5"/>
+  <rect x="164" y="117" width="12" height="76" fill="#241a17"/>
+  <rect x="159" y="135" width="22" height="33" fill="#171310"/>
+  <rect x="164" y="139" width="12" height="24" fill="#d6a658" opacity=".38"/>
+
+  <!-- side window bays -->
+  <rect x="54" y="119" width="36" height="33" fill="#8b9f97" stroke="#382a23" stroke-width="5"/>
+  <path d="M72 121 V150 M56 135 H88" stroke="#d6c49b" stroke-width="3"/>
+  <rect x="248" y="119" width="25" height="33" fill="#8b9f97" stroke="#382a23" stroke-width="5"/>
+  <path d="M260 121 V150 M250 135 H271" stroke="#d6c49b" stroke-width="3"/>
+
+  <!-- plank texture -->
+  <g stroke="#76503b" stroke-width="3" opacity=".65">
+    <path d="M44 108 H101 M239 108 H268"/>
+    <path d="M44 132 H99 M241 132 H268"/>
+    <path d="M44 157 H99 M241 157 H268"/>
+    <path d="M44 181 H99 M241 181 H268"/>
+  </g>
+
+  <!-- teach/learn placards -->
+  <rect x="49" y="160" width="45" height="22" fill="#2d241d" stroke="#b48b53" stroke-width="3"/>
+  <text x="71.5" y="175" text-anchor="middle" font-family="Georgia,serif" font-size="10" font-weight="700" fill="#ebd69f">TEACH</text>
+  <rect x="245" y="160" width="45" height="22" fill="#2d241d" stroke="#b48b53" stroke-width="3"/>
+  <text x="267.5" y="175" text-anchor="middle" font-family="Georgia,serif" font-size="10" font-weight="700" fill="#ebd69f">LEARN</text>
+
+  <!-- right silo/tank from canonical concept -->
+  <rect x="302" y="86" width="19" height="101" rx="8" fill="#6b5941" stroke="#382e24" stroke-width="4"/>
+  <ellipse cx="311.5" cy="86" rx="10" ry="5" fill="#88724e" stroke="#382e24" stroke-width="3"/>
+  <path d="M303 101 H320 M303 118 H320 M303 135 H320 M303 152 H320 M303 169 H320" stroke="#947b53" stroke-width="2"/>
+
+  <!-- entrance props matching concept -->
+  <rect x="15" y="171" width="18" height="27" fill="#493323" stroke="#2d211a" stroke-width="3"/>
+  <rect x="11" y="160" width="26" height="15" fill="#2c251e" stroke="#9f7c4e" stroke-width="3"/>
+  <circle cx="39" cy="192" r="9" fill="#6b4a31" stroke="#35261d" stroke-width="3"/>
+  <circle cx="287" cy="193" r="9" fill="#6b4a31" stroke="#35261d" stroke-width="3"/>
+  <g fill="#d8aa38"><circle cx="31" cy="194" r="3"/><circle cx="39" cy="187" r="3"/><circle cx="46" cy="194" r="3"/><circle cx="280" cy="192" r="3"/><circle cx="289" cy="186" r="3"/><circle cx="296" cy="193" r="3"/></g>
+  <g fill="#6f9854"><rect x="27" y="195" width="22" height="5"/><rect x="278" y="194" width="22" height="5"/></g>
+</svg>

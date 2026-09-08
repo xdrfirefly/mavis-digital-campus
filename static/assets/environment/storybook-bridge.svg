@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 68" shape-rendering="crispEdges">
+  <ellipse cx="64" cy="59" rx="54" ry="7" fill="#263629" opacity=".35"/>
+  <!-- stone abutments -->
+  <g stroke="#5e5544" stroke-width="2">
+    <path d="M4 44 L18 34 L25 48 L12 57 Z" fill="#9e967b"/>
+    <path d="M124 44 L110 34 L103 48 L116 57 Z" fill="#9e967b"/>
+    <path d="M7 46 L15 41 M13 52 L20 47 M121 46 L113 41 M115 52 L108 47" stroke="#c7b995"/>
+  </g>
+  <!-- bridge deck -->
+  <path d="M18 22 C43 14 85 14 110 22 L106 50 C82 44 46 44 22 50 Z" fill="#66442c" stroke="#3d2b20" stroke-width="4"/>
+  <g stroke="#b17c4e" stroke-width="5">
+    <path d="M23 25 L22 47"/>
+    <path d="M34 21 L34 46"/>
+    <path d="M46 19 L46 44"/>
+    <path d="M58 18 L58 43"/>
+    <path d="M70 18 L70 43"/>
+    <path d="M82 19 L82 44"/>
+    <path d="M94 21 L94 46"/>
+    <path d="M105 25 L106 47"/>
+  </g>
+  <!-- rails -->
+  <g fill="#553924" stroke="#35251b" stroke-width="2">
+    <rect x="18" y="11" width="5" height="28"/>
+    <rect x="38" y="7" width="5" height="27"/>
+    <rect x="85" y="7" width="5" height="27"/>
+    <rect x="105" y="11" width="5" height="28"/>
+  </g>
+  <g stroke="#7c5634" stroke-width="4" fill="none">
+    <path d="M20 14 C42 8 86 8 108 14"/>
+    <path d="M20 35 C42 29 86 29 108 35"/>
+  </g>
+  <!-- small floral/green touches -->
+  <g fill="#78904b">
+    <rect x="7" y="38" width="10" height="4"/>
+    <rect x="111" y="38" width="10" height="4"/>
+  </g>
+  <g fill="#d5a73c">
+    <circle cx="9" cy="37" r="2"/><circle cx="14" cy="35" r="2"/>
+    <circle cx="114" cy="35" r="2"/><circle cx="119" cy="37" r="2"/>
+  </g>
+</svg>
