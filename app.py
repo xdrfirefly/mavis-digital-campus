@@ -8206,6 +8206,17 @@ def phenology_history(conn: sqlite3.Connection, subject: str, stage: str, locati
     return {"subject":subject_display,"stage":stage_display,"location_area":location_area.strip(),"records":records,"statistics":stats}
 
 
+def seasonal_context(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Rose's read-only seasonal evidence bridge; recent means the last 45 calendar days."""
+    env=environment_summary(conn); today=date.fromisoformat(str(env.get("local_date") or date.today().isoformat())); cutoff=(today-timedelta(days=45)).isoformat()
+    facts=rows(conn,"SELECT subject,stage,observation_date,location_area,source,status,notes FROM phenology_observations WHERE status IN ('observed','confirmed') AND observation_date>=? ORDER BY observation_date DESC",(cutoff,))
+    observed=[{"subject":r["subject"],"stage":r["stage"],"date":r["observation_date"],"location":r["location_area"],"status":r["status"],"provenance":"Rose confirmed observation" if r["status"]=="confirmed" else "human observation"} for r in facts]
+    checks=rows(conn,"SELECT subject,stage,location_area,reason FROM phenology_checks WHERE status='pending' ORDER BY created_at DESC LIMIT 3")
+    worth=[{"subject":r["subject"],"stage":r["stage"],"location":r["location_area"],"reason":r["reason"],"provenance":"Rose seasonal check"} for r in checks]
+    current=env.get("current_conditions") or {}; weather={"summary":current.get("summary") or "Weather unavailable","source":current.get("source") or "Unavailable","provenance":"normalized MDC weather"}
+    return {"generated_at":utc_now(),"owner_agent_id":"research","calendar_date":today.isoformat(),"season":env.get("season"),"recency_days":45,"observed_now":observed,"worth_checking":worth,"weather":weather}
+
+
 @app.post("/api/environment/phenology")
 async def api_phenology_create(req: PhenologyObservationRequest) -> dict[str, Any]:
     try:
@@ -8236,6 +8247,11 @@ async def api_phenology_create(req: PhenologyObservationRequest) -> dict[str, An
 async def api_phenology_history(subject: str, stage: str, location_area: str = "") -> dict[str, Any]:
     with db() as conn:
         return phenology_history(conn, subject, stage, location_area)
+
+@app.get("/api/environment/seasonal-context")
+async def api_seasonal_context() -> dict[str, Any]:
+    with db() as conn:
+        return seasonal_context(conn)
 
 
 @app.post("/api/environment/phenology/{observation_id}/review")

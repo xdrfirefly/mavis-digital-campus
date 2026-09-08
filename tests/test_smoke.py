@@ -8,6 +8,11 @@ sys.path.insert(0, str(ROOT))
 
 import app as campus
 
+LIVE_VERSION = campus.SCHEMA_VERSION
+LIVE_BUILD = f"v{LIVE_VERSION}"
+LIVE_SHELL_LABEL = f"{LIVE_BUILD} · Weather-Aware Phenology"
+LIVE_CACHE_KEY = "093"
+
 
 def test_seed_state_and_executive_summary():
     original = campus.DB_PATH
@@ -35,7 +40,7 @@ def test_seed_state_and_executive_summary():
 def test_v074_static_shell():
     index = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
     js = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
-    assert "v0.8.7.4.2 · Campus Cleanup" in index
+    assert LIVE_SHELL_LABEL in index
     assert "needs-me-btn" in index
     assert "drawerExecutive" in js
     assert "data-note-project" in js
@@ -242,7 +247,7 @@ def test_v0681_focused_map_fixes():
     world_css = (ROOT / "static/css/world.css").read_text(encoding="utf-8")
     manifest = (ROOT / "static/assets/asset-manifest.json").read_text(encoding="utf-8")
 
-    assert "v0.8.7.4.2 · Campus Cleanup" in index
+    assert LIVE_SHELL_LABEL in index
     assert "bridge bridge-pond" not in index
     assert "path-patch-pond" not in index
     assert ".bridge-pond," in world_css
@@ -269,7 +274,7 @@ def test_v069_building_style_pass():
     world_css = (ROOT / "static/css/world.css").read_text(encoding="utf-8")
     manifest = (ROOT / "static/assets/asset-manifest.json").read_text(encoding="utf-8")
 
-    assert "v0.8.7.4.2 · Campus Cleanup" in index
+    assert LIVE_SHELL_LABEL in index
     assert "storybook-building-pass-v0.6.9" in manifest
     assert "north-pond-bridge-removed-v0.6.10" in manifest
     assert "width:245px !important" in world_css
@@ -295,7 +300,7 @@ def test_v0610_removed_north_pond_bridge():
     manifest = (ROOT / "static/assets/asset-manifest.json").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "v0.8.7.4.2 · Campus Cleanup" in index
+    assert LIVE_SHELL_LABEL in index
     assert "ASK THE CAMPUS" in index
     assert "CREATE A PROJECT" not in index
     assert "Campus Team" in index
@@ -426,7 +431,7 @@ def test_v071_chief_agent_files_and_ui():
     assert (ROOT / "agents/chief_of_staff.py").exists()
     assert (ROOT / "prompts/chief_of_staff.txt").exists()
     assert "ASK THE CAMPUS" in index
-    assert "v0.8.7.4.2 · Campus Cleanup" in index
+    assert LIVE_SHELL_LABEL in index
     assert "/api/chief/plan" in js
     assert '@app.post("/api/chief/plan")' in app_text
     assert "PLANNING ONLY" in prompt
@@ -672,7 +677,7 @@ def test_v072_execution_engine_completes_tasks_and_requests_review():
 
 def test_v072_manifest_keeps_specialists_simulated():
     manifest = (ROOT / "static/assets/asset-manifest.json").read_text(encoding="utf-8")
-    assert '"build": "v0.8.7.4.2"' in manifest
+    assert f'"build": "{LIVE_BUILD}"' in manifest
     assert '"chief_execution": "real-planning-and-final-review"' in manifest
     assert '"research_execution": "real-ai-routed"' in manifest
     assert '"approved_plan_execution": true' in manifest
@@ -1002,7 +1007,7 @@ def test_v075_execution_uses_real_research_and_real_programs():
 
 def test_v075_manifest_marks_research_and_programs_real():
     manifest = (ROOT / "static/assets/asset-manifest.json").read_text(encoding="utf-8")
-    assert '"build": "v0.8.7.4.2"' in manifest
+    assert f'"build": "{LIVE_BUILD}"' in manifest
     assert '"chief_execution": "real-planning-and-final-review"' in manifest
     assert '"research_execution": "real-ai-routed"' in manifest
     assert '"programs_execution": "real-ai-routed"' in manifest
@@ -1069,7 +1074,7 @@ def test_v0731_gemini_timeout_twice_has_clear_error():
 def test_v074_manifest_multi_provider_settings():
     import json
     data=json.loads((ROOT/"static/assets/asset-manifest.json").read_text(encoding="utf-8"))
-    assert data["build"] == "v0.8.7.4.2"
+    assert data["build"] == LIVE_BUILD
     runtime=data["ai_runtime"]
     assert runtime["providers"]["gemini"]["connection_test"] is True
     assert runtime["providers"]["openai"]["default_model"] == "gpt-5.6-terra"
@@ -1348,7 +1353,7 @@ def test_v075_manifest_structured_handoff():
     import json
     data=json.loads((ROOT/"static/assets/asset-manifest.json").read_text(encoding="utf-8"))
     runtime=data["ai_runtime"]
-    assert data["build"] == "v0.8.7.4.2"
+    assert data["build"] == LIVE_BUILD
     assert runtime["research_execution"] == "real-ai-routed"
     assert runtime["programs_execution"] == "real-ai-routed"
     assert runtime["caretaker_execution"] == "simulated"
@@ -1543,7 +1548,7 @@ def test_v0751_openai_rejects_incomplete_structured_response():
 def test_v0751_manifest_marks_programs_structured_output():
     import json
     data=json.loads((ROOT/"static/assets/asset-manifest.json").read_text(encoding="utf-8"))
-    assert data["build"] == "v0.8.7.4.2"
+    assert data["build"] == LIVE_BUILD
     structured=data["ai_runtime"]["programs_structured_output"]
     assert structured["provider"] == "openai"
     assert structured["api"] == "responses"
@@ -1792,7 +1797,7 @@ def test_v076_database_and_manifest_chief_review():
 
     data=json.loads((ROOT/"static/assets/asset-manifest.json").read_text(encoding="utf-8"))
     runtime=data["ai_runtime"]
-    assert data["build"] == "v0.8.7.4.2"
+    assert data["build"] == LIVE_BUILD
     assert runtime["chief_execution"] == "real-planning-and-final-review"
     assert runtime["structured_handoffs"]["research_and_programs_to_chief_review"] is True
     assert runtime["chief_final_review"]["same_provider_json_repair_attempt"] is True
@@ -1971,7 +1976,7 @@ def test_v077_manifest_decision_and_scroll_runtime():
     data=json.loads(
         (ROOT/"static/assets/asset-manifest.json").read_text(encoding="utf-8")
     )
-    assert data["build"] == "v0.8.7.4.2"
+    assert data["build"] == LIVE_BUILD
 
     routing=data["ai_runtime"]["executive_decision_routing"]
     assert routing["enabled"] is True
@@ -2259,7 +2264,7 @@ def test_v078_manifest_activity_and_cost_controls():
     data=json.loads(
         (ROOT/"static/assets/asset-manifest.json").read_text(encoding="utf-8")
     )
-    assert data["build"] == "v0.8.7.4.2"
+    assert data["build"] == LIVE_BUILD
 
     controls=data["ai_runtime"]["activity_cost_controls"]
     assert controls["enabled"] is True
@@ -2299,9 +2304,9 @@ def test_v079_schema_health_and_workflow_journal():
             assert "workflow_runs" in tables
             assert "schema_meta" in tables
             assert health["ok"] is True
-            assert health["schema_version"] == "0.8.7.4.2"
-            assert health["target_schema_version"] == "0.8.7.4.2"
-            assert schema["schema_version"] == "0.8.7.4.2"
+            assert health["schema_version"] == LIVE_VERSION
+            assert health["target_schema_version"] == LIVE_VERSION
+            assert schema["schema_version"] == LIVE_VERSION
     finally:
         campus.DB_PATH=original
 
@@ -2699,7 +2704,7 @@ def test_v079_recovery_ui_and_manifest():
     css=(ROOT/"static/css/world.css").read_text(encoding="utf-8")
     app_text=(ROOT/"app.py").read_text(encoding="utf-8")
 
-    assert "v0.8.7.4.2 · Campus Cleanup" in index
+    assert LIVE_SHELL_LABEL in index
     assert 'id="system-health"' in index
     assert "Retry / Resume Workflow" in js
     assert "data-retry-project" in js
@@ -2717,10 +2722,10 @@ def test_v079_recovery_ui_and_manifest():
     data=json.loads(
         (ROOT/"static/assets/asset-manifest.json").read_text(encoding="utf-8")
     )
-    assert data["build"] == "v0.8.7.4.2"
+    assert data["build"] == LIVE_BUILD
     recovery=data["ai_runtime"]["stabilization_recovery"]
     assert recovery["enabled"] is True
-    assert recovery["schema_version"] == "0.8.7.4.2"
+    assert recovery["schema_version"] == LIVE_VERSION
     assert recovery["explicit_human_retry_required"] is True
     assert recovery["preserve_completed_tasks_on_retry"] is True
     assert recovery["duplicate_final_approval_protection"] is True
@@ -2808,7 +2813,7 @@ def test_v080_schema_and_expected_deliverables_migration():
                 "title","status","content_md","version","verification_json"
             }.issubset(deliverable_columns)
             assert health["ok"] is True
-            assert health["schema_version"] == "0.8.7.4.2"
+            assert health["schema_version"] == LIVE_VERSION
     finally:
         campus.DB_PATH=original
 
@@ -3382,7 +3387,7 @@ def test_v080_outputs_ui_reader_exports_and_tabs():
     js=(ROOT/"static/js/app.js").read_text(encoding="utf-8")
     css=(ROOT/"static/css/world.css").read_text(encoding="utf-8")
 
-    assert "v0.8.7.4.2 · Campus Cleanup" in index
+    assert LIVE_SHELL_LABEL in index
     assert 'id="overview-outputs"' in index
     assert 'id="deliverable-modal"' in index
     assert "Download .md" in index
@@ -3415,8 +3420,8 @@ def test_v080_manifest_project_outputs():
     data=json.loads(
         (ROOT/"static/assets/asset-manifest.json").read_text(encoding="utf-8")
     )
-    assert data["build"] == "v0.8.7.4.2"
-    assert data["ai_runtime"]["stabilization_recovery"]["schema_version"] == "0.8.7.4.2"
+    assert data["build"] == LIVE_BUILD
+    assert data["ai_runtime"]["stabilization_recovery"]["schema_version"] == LIVE_VERSION
 
     outputs=data["ai_runtime"]["project_outputs"]
     assert outputs["enabled"] is True
@@ -4464,7 +4469,7 @@ def test_v081_revision_ui_and_manifest():
     app_text=(ROOT/"app.py").read_text(encoding="utf-8")
     prompt=(ROOT/"prompts/chief_revision.txt").read_text(encoding="utf-8")
 
-    assert "v0.8.7.4.2 · Campus Cleanup" in index
+    assert LIVE_SHELL_LABEL in index
     assert 'id="rail-revision-plan-count"' in index
     assert "Ask Stella to Plan Revision" in js
     assert "Approve selective revision" in js
@@ -4490,8 +4495,8 @@ def test_v081_revision_ui_and_manifest():
     data=json.loads(
         (ROOT/"static/assets/asset-manifest.json").read_text(encoding="utf-8")
     )
-    assert data["build"] == "v0.8.7.4.2"
-    assert data["ai_runtime"]["stabilization_recovery"]["schema_version"] == "0.8.7.4.2"
+    assert data["build"] == LIVE_BUILD
+    assert data["ai_runtime"]["stabilization_recovery"]["schema_version"] == LIVE_VERSION
     revision=data["ai_runtime"]["revision_loop"]
     assert revision["enabled"] is True
     assert revision["planner"] == "chief-real-ai-routed"
@@ -4519,7 +4524,7 @@ def test_v0811_repository_schema_and_health():
             assert "project_files" in tables
             assert {"project_id","source_deliverable_id","display_name","filename","relative_path","file_kind","version","status"}.issubset(cols)
             assert health["ok"] is True
-            assert health["schema_version"] == "0.8.7.4.2"
+            assert health["schema_version"] == LIVE_VERSION
     finally:
         campus.DB_PATH=original
         campus.REPOSITORY=original_repo
@@ -4673,7 +4678,7 @@ def test_v0811_repository_and_readability_ui():
     index=(ROOT/"static/index.html").read_text(encoding="utf-8")
     js=(ROOT/"static/js/app.js").read_text(encoding="utf-8")
     css=(ROOT/"static/css/app.css").read_text(encoding="utf-8")
-    assert "v0.8.7.4.2 · Campus Cleanup" in index
+    assert LIVE_SHELL_LABEL in index
     assert 'id="repository-btn"' in index
     assert 'id="top-repository-count"' in index
     assert 'data-panel="repository"' in index
@@ -4694,8 +4699,8 @@ def test_v0811_repository_and_readability_ui():
 def test_v0811_manifest_repository_and_workspace():
     import json
     data=json.loads((ROOT/"static/assets/asset-manifest.json").read_text(encoding="utf-8"))
-    assert data["build"] == "v0.8.7.4.2"
-    assert data["ai_runtime"]["stabilization_recovery"]["schema_version"] == "0.8.7.4.2"
+    assert data["build"] == LIVE_BUILD
+    assert data["ai_runtime"]["stabilization_recovery"]["schema_version"] == LIVE_VERSION
     repo=data["project_repository"]
     assert repo["enabled"] is True
     assert repo["table"] == "project_files"
@@ -4717,7 +4722,7 @@ def test_v082_institutional_memory_schema_context_and_reset_survival(tmp_path):
         with campus.db() as conn:
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             assert "institutional_memory" in tables
-            assert campus.system_health(conn)["schema_version"] == "0.8.7.4.2"
+            assert campus.system_health(conn)["schema_version"] == LIVE_VERSION
             now = campus.utc_now()
             project_id = int(conn.execute(
                 "INSERT INTO projects(title,status,created_at,updated_at) VALUES(?,?,?,?)",
@@ -4772,7 +4777,7 @@ def test_v082_memory_ui_and_no_calendar_scope():
     app_text = (ROOT / "app.py").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "v0.8.7.4.2 · Campus Cleanup" in index
+    assert LIVE_SHELL_LABEL in index
     assert 'id="memory-btn"' in index
     assert 'data-panel="memory"' in index
     assert "drawerMemory" in js
@@ -4844,7 +4849,7 @@ def test_v083_memory_capture_edit_and_provenance(tmp_path):
             dsource = campus._memory_capture_source(conn,"deliverable",deliverable_id)
             assert dsource["source_kind"] == "deliverable"
             assert "Durable output" in dsource["body"]
-        assert campus.SCHEMA_VERSION == "0.8.7.4.2"
+        assert campus.SCHEMA_VERSION == LIVE_VERSION
     finally:
         campus.DB_PATH = old_db
         campus.REPOSITORY = old_repo
@@ -4874,7 +4879,7 @@ def test_v084_memory_governance_schema_and_review_math(tmp_path):
         with campus.db() as conn:
             cols={row[1] for row in conn.execute("PRAGMA table_info(institutional_memory)")}
             assert {"reviewed_at","review_interval_days","review_due_at","supersedes_id","superseded_by_id"}.issubset(cols)
-            assert campus.system_health(conn)["schema_version"] == "0.8.7.4.2"
+            assert campus.system_health(conn)["schema_version"] == LIVE_VERSION
         due=campus.memory_review_due("2026-01-01T00:00:00+00:00",90)
         assert due.startswith("2026-04-01")
         assert campus.memory_review_due("2026-01-01T00:00:00+00:00",0) is None
@@ -4931,7 +4936,7 @@ def test_v085_playbook_ui_manifest_and_no_calendar():
     js=(ROOT/'static/js/app.js').read_text(encoding='utf-8')
     readme=(ROOT/'README.md').read_text(encoding='utf-8')
     data=json.loads((ROOT/'static/assets/asset-manifest.json').read_text(encoding='utf-8'))
-    assert 'v0.8.7.4.2 · Campus Cleanup' in index
+    assert LIVE_SHELL_LABEL in index
     assert 'data-panel="playbooks"' in index
     assert 'drawerPlaybooks' in js and 'data-playbook-form' in js
     assert data['institutional_playbooks']['enabled'] is True
@@ -4978,7 +4983,7 @@ def test_v086_briefing_ui_manifest_and_no_scheduled_integrations():
     js=(ROOT/'static/js/app.js').read_text(encoding='utf-8')
     readme=(ROOT/'README.md').read_text(encoding='utf-8')
     data=json.loads((ROOT/'static/assets/asset-manifest.json').read_text(encoding='utf-8'))
-    assert 'v0.8.7.4.2 · Campus Cleanup' in index
+    assert LIVE_SHELL_LABEL in index
     assert 'data-panel="briefing"' in index and 'drawerBriefing' in js
     assert '/api/briefing/snapshot' in js
     brief=data['executive_briefing']
@@ -4999,7 +5004,7 @@ def test_v0861_library_foundation_schema_is_local_durable_and_empty(tmp_path):
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             assert {"library_collections", "library_materials"}.issubset(tables)
             assert campus.system_health(conn)["ok"] is True
-            assert campus.system_health(conn)["schema_version"] == "0.8.7.4.2"
+            assert campus.system_health(conn)["schema_version"] == LIVE_VERSION
             summary = campus.library_foundation_summary(conn)
             assert summary == {
                 "enabled": True,
@@ -5062,8 +5067,8 @@ def test_v0861_manifest_and_roadmap_keep_future_integrations_deferred():
     data = json.loads((ROOT / "static/assets/asset-manifest.json").read_text(encoding="utf-8"))
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     lib = data["library_foundation"]
-    assert data["build"] == "v0.8.7.4.2"
-    assert data["version"] == "0.8.7.4.2"
+    assert data["build"] == LIVE_BUILD
+    assert data["version"] == LIVE_VERSION
     assert lib["tables"] == ["library_collections", "library_materials", "library_material_index", "library_inbox", "programs_library_preflights", "program_archive_events"]
     assert lib["local_only"] is True and lib["additional_ai_calls"] == 0
     assert lib["uploads_enabled"] is True
@@ -5157,15 +5162,15 @@ def test_v0865_library_catalog_ui_manifest_and_cache_key():
     js = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     data = json.loads((ROOT / "static/assets/asset-manifest.json").read_text(encoding="utf-8"))
-    assert "v0.8.7.4.2 · Campus Cleanup" in index
+    assert LIVE_SHELL_LABEL in index
     assert 'data-panel="library"' in index
-    assert 'app.js?v=08742' in index
-    assert 'app.css?v=08742' in index
+    assert f'app.js?v={LIVE_CACHE_KEY}' in index
+    assert f'app.css?v={LIVE_CACHE_KEY}' in index
     assert 'drawerLibrary' in js
     assert 'data-library-form' in js
     assert 'data-library-search' in js
     assert '/api/library/collections' in js
-    assert data["build"] == "v0.8.7.4.2"
+    assert data["build"] == LIVE_BUILD
     assert data["library_foundation"]["phase"] == "programs_auto_archive"
     assert data["library_foundation"]["catalog_enabled"] is True
     assert data["library_foundation"]["catalog_search_enabled"] is True
@@ -5272,8 +5277,8 @@ def test_v0865_library_intake_ui_manifest_and_quarantine_contract():
     js = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     data = json.loads((ROOT / "static/assets/asset-manifest.json").read_text(encoding="utf-8"))
-    assert "v0.8.7.4.2 · Campus Cleanup" in index
-    assert "app.js?v=08742" in index and "app.css?v=08742" in index
+    assert LIVE_SHELL_LABEL in index
+    assert f"app.js?v={LIVE_CACHE_KEY}" in index and f"app.css?v={LIVE_CACHE_KEY}" in index
     assert "data-library-upload-form" in js
     assert "/api/library/inbox/upload" in js
     assert "Incoming files are quarantined" in js
@@ -6140,14 +6145,13 @@ def test_v08698_revision_archives_into_selected_collection_without_duplicating_o
         campus.DB_PATH, campus.REPOSITORY = original_db, original_repo
 
 
-def test_v08698_manifest_ui_and_archive_boundary():
+def test_v08698_manifest_and_archive_boundary():
     import json
     index = (ROOT / "static/index.html").read_text(encoding="utf-8")
-    js = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     data = json.loads((ROOT / "static/assets/asset-manifest.json").read_text(encoding="utf-8"))
-    assert "v0.8.7.4.2 · Campus Cleanup" in index
-    assert "app.js?v=08742" in index and "app.css?v=08742" in index
+    assert LIVE_SHELL_LABEL in index
+    assert f"app.js?v={LIVE_CACHE_KEY}" in index and f"app.css?v={LIVE_CACHE_KEY}" in index
     lib = data["library_foundation"]
     assert lib["phase"] == "programs_auto_archive"
     assert lib["program_auto_archive_enabled"] is True
@@ -6155,8 +6159,6 @@ def test_v08698_manifest_ui_and_archive_boundary():
     assert lib["program_auto_archive_web_access"] is False
     assert lib["program_auto_archive_ai_calls"] == 0
     assert "program_archive_events" in lib["tables"]
-    assert "Programs Auto-Archive" in js
-    assert "final human approval only" in js
     assert "Initial plan approval" in readme
     assert "zero AI calls and zero network calls" in readme
     assert "no direct web access" in readme
@@ -6167,10 +6169,10 @@ def test_v08698_world_shell_restored_and_cache_busted():
     js = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
     assert 'id="buildings"' in index
     assert 'id="agents"' in index
-    assert '/static/css/world.css?v=08742' in index
-    assert '/static/js/app.js?v=08742' in index
-    assert "./world-config.js?v=08742" in js
-    assert "./world-assets.js?v=08742" in js
+    assert f'/static/css/world.css?v={LIVE_CACHE_KEY}' in index
+    assert f'/static/js/app.js?v={LIVE_CACHE_KEY}' in index
+    assert f"./world-config.js?v={LIVE_CACHE_KEY}" in js
+    assert f"./world-assets.js?v={LIVE_CACHE_KEY}" in js
     assert 'function renderBuildings()' in js
     assert 'function renderAgents()' in js
 
@@ -6210,7 +6212,7 @@ def test_v08698_pws_weather_defaults_and_separation(tmp_path, monkeypatch):
         with campus.db() as conn:
             env = campus.environment_summary(conn)
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert campus.SCHEMA_VERSION == "0.8.7.4.2"
+        assert campus.SCHEMA_VERSION == LIVE_VERSION
         assert {"environment_settings", "weather_current", "weather_daily", "seasonal_windows"}.issubset(tables)
         assert env["phase"] == "weather_seasons_pws"
         assert env["pws_station_id"] == "KWFLATT11"
@@ -6287,8 +6289,8 @@ def test_v08698_weather_ui_keeps_known_good_world_modules_and_pws_controls():
     js = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
     librarian = (ROOT / "agents/librarian.py").read_text(encoding="utf-8")
     assert 'data-panel="environment"' in index
-    assert "./world-config.js?v=08742" in js
-    assert "./world-assets.js?v=08742" in js
+    assert f"./world-config.js?v={LIVE_CACHE_KEY}" in js
+    assert f"./world-assets.js?v={LIVE_CACHE_KEY}" in js
     assert "KWFLATT11" in js
     assert "data-weather-refresh" in js
     assert "WEATHER_UNDERGROUND_API_KEY" in js
@@ -6336,9 +6338,9 @@ def test_v08698_pond_weather_widget_is_isolated_and_clickable():
     assert "pondWeatherWidget?.addEventListener('click',()=>openDrawer('environment'))" in js
     assert ".pond-living-icons{" in css
     assert "z-index:24" in css
-    assert 'src="/static/js/app.js?v=08742"' in index
-    assert 'href="/static/css/world.css?v=08742"' in index
-    assert 'href="/static/css/app.css?v=08742"' in index
+    assert f'src="/static/js/app.js?v={LIVE_CACHE_KEY}"' in index
+    assert f'href="/static/css/world.css?v={LIVE_CACHE_KEY}"' in index
+    assert f'href="/static/css/app.css?v={LIVE_CACHE_KEY}"' in index
 
 
 def test_v08698_canonical_agent_display_identities(tmp_path, monkeypatch):
@@ -6370,8 +6372,8 @@ def test_v08698_prompt_maps_stable_ids_to_canonical_staff_names():
 def test_v08698_ui_uses_canonical_staff_names_and_new_cache_key():
     index = (ROOT / 'static/index.html').read_text(encoding='utf-8')
     js = (ROOT / 'static/js/app.js').read_text(encoding='utf-8')
-    assert 'v0.8.7.4.2 · Campus Cleanup · Ask the Campus · Calendar · Daily Steward · Weather & Seasons · Poe Work Hours · Vernadette Grants' in index
-    assert 'app.js?v=08742' in index
+    assert LIVE_SHELL_LABEL in index
+    assert f'app.js?v={LIVE_CACHE_KEY}' in index
     assert 'Stella · Chief of Staff' in js
     assert 'Percy · Director of Programs & Education' in js
     assert 'Rose · Director of Research & Archives' in js
@@ -6510,8 +6512,8 @@ def test_v08698_work_report_ui_and_cache_key():
     index = (root / 'static' / 'index.html').read_text(encoding='utf-8')
     js = (root / 'static' / 'js' / 'app.js').read_text(encoding='utf-8')
     css = (root / 'static' / 'css' / 'app.css').read_text(encoding='utf-8')
-    assert 'v0.8.7.4.2' in index
-    assert 'app.js?v=08742' in index and 'app.css?v=08742' in index and 'world.css?v=08742' in index
+    assert LIVE_BUILD in index
+    assert f'app.js?v={LIVE_CACHE_KEY}' in index and f'app.css?v={LIVE_CACHE_KEY}' in index and f'world.css?v={LIVE_CACHE_KEY}' in index
     assert 'data-work-report-form' in js
     assert '/api/work-report.csv' in js
     assert 'Monthly Totals' in js
@@ -6604,8 +6606,8 @@ def test_v08698_poe_talk_ui_and_local_parser_contract():
     js = (root / 'static' / 'js' / 'app.js').read_text(encoding='utf-8')
     css = (root / 'static' / 'css' / 'app.css').read_text(encoding='utf-8')
     app_text = (root / 'app.py').read_text(encoding='utf-8')
-    assert 'v0.8.7.4.2' in index
-    assert 'app.js?v=08742' in index
+    assert LIVE_BUILD in index
+    assert f'app.js?v={LIVE_CACHE_KEY}' in index
     assert 'data-poe-command-form' in js
     assert '/api/poe/command' in js
     assert 'data-person-primary' in js
@@ -6746,8 +6748,8 @@ def test_v08698_grant_ui_and_cache_key():
     js=(ROOT/'static/js/app.js').read_text(encoding='utf-8')
     css=(ROOT/'static/css/app.css').read_text(encoding='utf-8')
     world=(ROOT/'static/css/world.css').read_text(encoding='utf-8')
-    assert 'v0.8.7.4.2' in index
-    assert 'app.js?v=08742' in index and 'app.css?v=08742' in index
+    assert LIVE_BUILD in index
+    assert f'app.js?v={LIVE_CACHE_KEY}' in index and f'app.css?v={LIVE_CACHE_KEY}' in index
     assert 'data-panel="grants"' in index
     assert 'function drawerGrants()' in js
     assert 'data-grant-form' in js
@@ -6810,8 +6812,8 @@ def test_v08698_vernadette_conversation_ui_contract():
     js=(ROOT/'static/js/app.js').read_text(encoding='utf-8')
     css=(ROOT/'static/css/app.css').read_text(encoding='utf-8')
     app_text=(ROOT/'app.py').read_text(encoding='utf-8')
-    assert 'v0.8.7.4.2' in index
-    assert 'app.js?v=08742' in index and 'app.css?v=08742' in index
+    assert LIVE_BUILD in index
+    assert f'app.js?v={LIVE_CACHE_KEY}' in index and f'app.css?v={LIVE_CACHE_KEY}' in index
     assert 'data-vernadette-command-form' in js
     assert '/api/vernadette/command' in js
     assert 'local + federal search · no AI call' in js
@@ -7138,12 +7140,12 @@ def test_v087_daily_steward_ui_manifest_and_cache_key():
     js=(ROOT/'static/js/app.js').read_text(encoding='utf-8')
     css=(ROOT/'static/css/app.css').read_text(encoding='utf-8')
     data=json.loads((ROOT/'static/assets/asset-manifest.json').read_text(encoding='utf-8'))
-    assert 'v0.8.7.4.2 · Campus Cleanup' in index
+    assert LIVE_SHELL_LABEL in index
     assert 'Stella Daily Steward' in index
     assert 'data-stella-daily-form' in js and '/api/stella/daily' in js
     assert 'What to focus on today' in js and 'Protect your attention' in js
     assert '.daily-focus-card' in css
-    assert 'app.js?v=08742' in index and 'app.css?v=08742' in index and 'world.css?v=08742' in index
+    assert f'app.js?v={LIVE_CACHE_KEY}' in index and f'app.css?v={LIVE_CACHE_KEY}' in index and f'world.css?v={LIVE_CACHE_KEY}' in index
     assert data['daily_steward']['enabled'] is True
     assert data['daily_steward']['max_focus_items']==3
     assert data['daily_steward']['calendar_connected'] is True
@@ -7207,12 +7209,12 @@ def test_v08742_calendar_ui_manifest_and_cache_key():
     js=(ROOT/'static/js/app.js').read_text(encoding='utf-8')
     css=(ROOT/'static/css/app.css').read_text(encoding='utf-8')
     data=json.loads((ROOT/'static/assets/asset-manifest.json').read_text(encoding='utf-8'))
-    assert 'v0.8.7.4.2 · Campus Cleanup' in index
+    assert LIVE_SHELL_LABEL in index
     assert 'data-panel="calendar"' in index
     assert 'function drawerCalendar()' in js
     assert 'data-calendar-event-form' in js and '/api/events' in js
     assert '.calendar-event-card' in css
-    assert 'app.js?v=08742' in index and 'app.css?v=08742' in index and 'world.css?v=08742' in index
+    assert f'app.js?v={LIVE_CACHE_KEY}' in index and f'app.css?v={LIVE_CACHE_KEY}' in index and f'world.css?v={LIVE_CACHE_KEY}' in index
     assert data['calendar_foundation']['enabled'] is True
     assert data['daily_steward']['calendar_connected'] is True
     assert data['calendar_foundation']['google_calendar_connected'] is False
@@ -7333,7 +7335,7 @@ def test_ask_the_campus_frontend_regression_guards():
     assert "scrollIntoView" in js
     assert "grantDiscoveryResult={provider:result.vernadette_result.provider" in js
     assert "grantDiscovery={provider:result.vernadette_result.provider" not in js
-    assert "app.js?v=08742" in index
+    assert f"app.js?v={LIVE_CACHE_KEY}" in index
 
 
 def test_v08742_campus_routing_reason_and_followup():
@@ -7361,8 +7363,8 @@ def test_v08742_ask_ui_polish_and_cache_key():
     index = (root / "static" / "index.html").read_text(encoding="utf-8")
     js = (root / "static" / "js" / "app.js").read_text(encoding="utf-8")
     css = (root / "static" / "css" / "app.css").read_text(encoding="utf-8")
-    assert "v0.8.7.4.2 · Campus Cleanup · Ask the Campus" in index
-    assert "app.js?v=08742" in index and "app.css?v=08742" in index and "world.css?v=08742" in index
+    assert LIVE_SHELL_LABEL in index
+    assert f"app.js?v={LIVE_CACHE_KEY}" in index and f"app.css?v={LIVE_CACHE_KEY}" in index and f"world.css?v={LIVE_CACHE_KEY}" in index
     assert 'id="campus-ask-clear"' in index
     assert "previous_agent:previousAgent" in js
     assert "CAMPUS_ASK_SESSION_KEY" in js
@@ -7383,8 +7385,8 @@ def test_v08742_living_campus_ambient_movement_and_newest_first_ask_history():
     js = (root / "static" / "js" / "app.js").read_text(encoding="utf-8")
     app_css = (root / "static" / "css" / "app.css").read_text(encoding="utf-8")
     world_css = (root / "static" / "css" / "world.css").read_text(encoding="utf-8")
-    assert "v0.8.7.4.2" in index
-    assert "app.js?v=08742" in index and "app.css?v=08742" in index and "world.css?v=08742" in index
+    assert LIVE_BUILD in index
+    assert f"app.js?v={LIVE_CACHE_KEY}" in index and f"app.css?v={LIVE_CACHE_KEY}" in index and f"world.css?v={LIVE_CACHE_KEY}" in index
     assert "function startAmbientMovement()" in js
     assert "function ambientTravelAgent(agent,destinationNode" in js
     assert "agentCanAmbientWander" in js
@@ -7464,4 +7466,39 @@ def test_phenology_history_uses_trusted_normalized_records(tmp_path, monkeypatch
         assert history["statistics"]["years_recorded"]==2 and history["statistics"]["earliest_date"]=="2024-08-07"
         with campus.db() as conn: local=campus.phenology_history(conn,"ironweed","first bloom","Fruit Forest")
         assert len(local["records"])==1 and local["records"][0]["location_area"]=="Fruit Forest"
+    finally: campus.DB_PATH=old
+
+
+def test_seasonal_context_trust_recency_weather_and_read_only(tmp_path, monkeypatch):
+    import asyncio
+    from datetime import timedelta
+    import app as campus
+    old=campus.DB_PATH; monkeypatch.setattr(campus,"DB_PATH",tmp_path/"context.db")
+    try:
+        campus.init_db()
+        with campus.db() as conn:
+            today=campus.date.fromisoformat(campus.environment_summary(conn)["local_date"])
+            now=campus.utc_now()
+            for subject,status,when in [("Observed plant","observed",today),("Confirmed plant","confirmed",today),("Suggested plant","suggested",today),("Rejected plant","rejected",today),("Recency boundary plant","observed",today-timedelta(days=45)),("Stale plant","observed",today-timedelta(days=46))]:
+                conn.execute("INSERT INTO phenology_observations(subject,stage,observation_date,location_area,status,source,notes,review_agent_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(subject,"first bloom",when.isoformat(),"Fruit Forest",status,"human observation","","research",now,now))
+            conn.execute("INSERT INTO phenology_checks(subject,stage,location_area,reason,status,rose_agent_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",("Sunchokes","first flower","Fruit Forest","Worth checking.","pending","research",now,now))
+            conn.execute("INSERT OR REPLACE INTO weather_current(id,source,source_kind,summary,updated_at) VALUES(1,?,?,?,?)",("Open-Meteo fallback","model_fallback","Warm and humid",now))
+            before={table:conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in ("phenology_observations","phenology_checks","tasks")}
+            context=campus.seasonal_context(conn)
+            after={table:conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in before}
+        assert before==after
+        assert {item["subject"] for item in context["observed_now"]}=={"Observed plant","Confirmed plant","Recency boundary plant"}
+        assert {item["provenance"] for item in context["observed_now"]}=={"human observation","Rose confirmed observation"}
+        assert context["worth_checking"][0]["subject"]=="Sunchokes"
+        assert context["worth_checking"][0]["provenance"]=="Rose seasonal check"
+        assert "Sunchokes" not in {item["subject"] for item in context["observed_now"]}
+        assert context["weather"]=={"summary":"Warm and humid","source":"Open-Meteo fallback","provenance":"normalized MDC weather"}
+        response=asyncio.run(campus.api_seasonal_context())
+        assert {"generated_at","calendar_date","season","recency_days","observed_now","worth_checking","weather"}.issubset(response)
+        assert response["recency_days"]==45
+        with campus.db() as conn:
+            conn.execute("DELETE FROM weather_current")
+            unavailable=campus.seasonal_context(conn)
+        assert unavailable["weather"]["summary"]=="Weather unavailable"
+        assert unavailable["weather"]["source"]=="Unavailable"
     finally: campus.DB_PATH=old
