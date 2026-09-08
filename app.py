@@ -66,6 +66,12 @@ EVENT_COMMITMENT_LEVELS = ("Light", "Normal", "Major")
 EVENT_STATUSES = ("Scheduled", "Cancelled")
 PHENOLOGY_STATUSES = ("suggested", "observed", "confirmed", "rejected")
 PHENOLOGY_SOURCES = ("human observation", "system suggestion", "imported record")
+PHENOLOGY_WATCHLIST_SEEDS = [
+    ("Sunchokes","Food & garden plants","Fruit Forest",["emergence","first flower","full bloom","foliage dieback","harvest-ready"]),("Corn","Food & garden plants","Fruit Forest",["emergence","tasseling","silking","ear development","harvest","dry-down"]),("Grapes","Food & garden plants","Fruit Forest",["bud break","leaf-out","bloom","fruit set","veraison","ripe","harvest","leaf fall"]),("Apple","Food & garden plants","Fruit Forest",["bud break","first bloom","full bloom","fruit set","harvest","leaf fall"]),("Garlic","Food & garden plants","Fruit Forest",["emergence","scapes","harvest"]),("Tomatoes","Food & garden plants","Fruit Forest",["first bloom","fruit set","ripening","harvest"]),("Berries","Food & garden plants","Fruit Forest",["first bloom","fruit set","ripe","harvest"]),
+    ("Multiflora rose","Wild Appalachian / property","Fruit Forest",["leaf-out","first bloom","full bloom","hips forming","hips ripe","leaf fall"]),("Ironweed","Wild Appalachian / property","Fruit Forest",["emergence","first bloom","full bloom","seed heads","dieback"]),("Goldenrod","Wild Appalachian / property","Fruit Forest",["emergence","first bloom","full bloom","seed heads"]),("Jewelweed","Wild Appalachian / property","Fruit Forest",["emergence","first bloom","seed heads"]),("Milkweed","Wild Appalachian / property","Fruit Forest",["emergence","first bloom","seed pods"]),("Dandelion","Wild Appalachian / property","Fruit Forest",["first bloom","seed heads"]),("Mayapple","Wild Appalachian / property","Fruit Forest",["emergence","first bloom","fruiting"]),("Tulip poplar","Wild Appalachian / property","Fruit Forest",["bud break","first bloom","leaf color","leaf fall"]),("Redbud","Wild Appalachian / property","Fruit Forest",["first bloom","full bloom","leaf-out","leaf fall"]),("Dogwood","Wild Appalachian / property","Fruit Forest",["first bloom","full bloom","leaf color","leaf fall"]),("Maple","Wild Appalachian / property","Fruit Forest",["bud break","leaf color","leaf fall"]),("Black walnut","Wild Appalachian / property","Fruit Forest",["leaf-out","fruit set","leaf color","leaf fall"]),
+    ("Toads","Animals / insects / amphibians","Pond",["first adult seen","first calling heard","breeding observed","egg strings observed","first tadpoles","tadpoles developing legs","first tiny toads / metamorphs"]),("Tadpoles","Animals / insects / amphibians","Pond",["first observed","peak abundance","legs developing","metamorphosis","leaving water"]),("Spring peepers","Animals / insects / amphibians","Pond",["first heard","calling peak"]),("Fireflies","Animals / insects / amphibians","Fruit Forest",["first seen","peak abundance"]),("Honey bees","Animals / insects / amphibians","Fruit Forest",["first strong foraging flight","major pollen flow","strong nectar flow","swarm activity","reduced fall activity"]),("Bumblebees","Animals / insects / amphibians","Fruit Forest",["first seen","peak abundance"]),("Hummingbirds","Animals / insects / amphibians","Fruit Forest",["arrival","nesting","departure"]),("Monarchs","Animals / insects / amphibians","Fruit Forest",["first seen","migration / arrival"]),("Cicadas","Animals / insects / amphibians","Fruit Forest",["first heard","emergence"]),
+    *((name,"Seasonal / physical indicators","Campus-wide",[name.lower()]) for name in ["First frost","First hard freeze","Last spring frost","First snow","Pond thaw / ice-out","Pond first freeze","Soil workable","First major spring warm-up","First major thunderstorm","Peak fall color","50% leaf color","75% leaf fall"]),
+]
 
 
 def utc_now() -> str:
@@ -632,6 +638,13 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_phenology_observations_date ON phenology_observations(observation_date DESC,id DESC);
             CREATE INDEX IF NOT EXISTS idx_phenology_observations_status ON phenology_observations(status,observation_date DESC);
 
+            CREATE TABLE IF NOT EXISTS phenology_watchlist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, subject TEXT NOT NULL, category TEXT NOT NULL, location_area TEXT NOT NULL,
+                stages_json TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'Active', priority TEXT NOT NULL DEFAULT 'Normal',
+                notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_phenology_watchlist_status ON phenology_watchlist(status,category,subject);
+
             CREATE TABLE IF NOT EXISTS playbooks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
@@ -854,6 +867,8 @@ def init_db() -> None:
                     ('Meteorological Autumn','Season','09-01','11-30','Normal','Baseline seasonal context; customize farm-specific windows separately.','Active',now_env,now_env),
                 ],
             )
+        if int(conn.execute("SELECT COUNT(*) FROM phenology_watchlist").fetchone()[0]) == 0:
+            conn.executemany("INSERT INTO phenology_watchlist(subject,category,location_area,stages_json,status,priority,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)", [(s,c,l,json.dumps(stages),"Active","Normal","",now_env,now_env) for s,c,l,stages in PHENOLOGY_WATCHLIST_SEEDS])
 
         conn.execute(
             """
@@ -1947,6 +1962,10 @@ def environment_summary(conn: sqlite3.Connection) -> dict[str, Any]:
     md = local_now.strftime("%m-%d")
     windows = rows(conn, "SELECT * FROM seasonal_windows ORDER BY category,name,id")
     phenology = rows(conn, "SELECT * FROM phenology_observations ORDER BY observation_date DESC,id DESC LIMIT 50")
+    watchlist = rows(conn, "SELECT * FROM phenology_watchlist ORDER BY category,subject,id")
+    for item in watchlist:
+        try: item["stages"] = json.loads(item.pop("stages_json"))
+        except Exception: item["stages"] = []
     active = [w for w in windows if w.get("status") == "Active" and _md_active(md, w["start_md"], w["end_md"])]
     today = local_now.date().isoformat()
     weather = rows(conn, "SELECT * FROM weather_daily WHERE forecast_date>=? ORDER BY forecast_date LIMIT 10", (today,))
@@ -2016,6 +2035,7 @@ def environment_summary(conn: sqlite3.Connection) -> dict[str, Any]:
         "active_seasonal_windows": active,
         "seasonal_windows": windows,
         "phenology_observations": phenology,
+        "phenology_watchlist": watchlist,
         "forecast_days": weather,
         "forecast_source": settings.get("forecast_source") or "Open-Meteo",
         "fallback_provider": settings.get("fallback_provider") or "Open-Meteo",
@@ -2038,7 +2058,7 @@ def system_health(conn: sqlite3.Connection) -> dict[str, Any]:
         "chief_plans","research_artifacts","programs_artifacts","chief_review_artifacts",
         "workflow_runs","chief_request_submissions","schema_meta","deliverables","revision_requests","revision_plans","project_files","institutional_memory","playbooks","briefing_snapshots",
         "library_collections","library_materials","library_material_index","library_inbox","programs_library_preflights","program_archive_events",
-        "environment_settings","weather_current","weather_daily","seasonal_windows","phenology_observations",
+        "environment_settings","weather_current","weather_daily","seasonal_windows","phenology_observations","phenology_watchlist",
     }
     tables = {
         row[0]
@@ -7154,6 +7174,9 @@ class PhenologyReviewRequest(BaseModel):
     status: str
     notes: str = ""
 
+class PhenologyWatchlistRequest(BaseModel):
+    subject: str; category: str; location_area: str; stages: list[str] = []; priority: str = "Normal"; notes: str = ""
+
 
 class PersonRequest(BaseModel):
     display_name: str
@@ -8201,6 +8224,30 @@ async def api_phenology_review(observation_id: int, req: PhenologyReviewRequest)
         result = dict(conn.execute("SELECT * FROM phenology_observations WHERE id=?", (observation_id,)).fetchone())
     await hub.broadcast()
     return {"status": req.status, "observation": result}
+
+@app.post("/api/environment/phenology/watchlist")
+async def api_phenology_watchlist_create(req: PhenologyWatchlistRequest) -> dict[str, Any]:
+    stages=[" ".join(str(s).split())[:120] for s in req.stages if str(s).strip()]
+    with db() as conn:
+        now=utc_now(); cur=conn.execute("INSERT INTO phenology_watchlist(subject,category,location_area,stages_json,status,priority,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",(_phenology_text(req.subject,"watchlist subject",180),_phenology_text(req.category,"watchlist category",120),_phenology_text(req.location_area,"watchlist location",180),json.dumps(stages),"Active",req.priority if req.priority in {"Low","Normal","High"} else "Normal"," ".join(req.notes.split()).strip()[:1000],now,now)); row=dict(conn.execute("SELECT * FROM phenology_watchlist WHERE id=?",(cur.lastrowid,)).fetchone())
+    row["stages"]=json.loads(row.pop("stages_json")); await hub.broadcast(); return {"status":"created","watchlist":row}
+
+@app.post("/api/environment/phenology/watchlist/{watch_id}/status")
+async def api_phenology_watchlist_status(watch_id:int, req: LibraryCollectionStatusRequest)->dict[str,Any]:
+    if req.status not in {"Active","Inactive"}: raise HTTPException(status_code=400,detail="Watchlist status must be Active or Inactive.")
+    with db() as conn:
+        if not conn.execute("SELECT 1 FROM phenology_watchlist WHERE id=?",(watch_id,)).fetchone(): raise HTTPException(status_code=404,detail="Phenology watchlist item not found.")
+        conn.execute("UPDATE phenology_watchlist SET status=?,updated_at=? WHERE id=?",(req.status,utc_now(),watch_id))
+    await hub.broadcast(); return {"status":req.status}
+
+@app.post("/api/environment/phenology/watchlist/{watch_id}/suggest")
+async def api_phenology_watchlist_suggest(watch_id:int)->dict[str,Any]:
+    with db() as conn:
+        watch=conn.execute("SELECT * FROM phenology_watchlist WHERE id=?",(watch_id,)).fetchone()
+        if not watch or watch["status"]!="Active": raise HTTPException(status_code=409,detail="An active watchlist item is required.")
+        stages=json.loads(watch["stages_json"]); stage=stages[0] if stages else "check-in"
+        today=date.fromisoformat(str(environment_summary(conn)["local_date"])); now=utc_now(); prompt=f"Rose check-in: Are you seeing {watch['subject']} — {stage} at {watch['location_area']}?"; cur=conn.execute("INSERT INTO phenology_observations(subject,stage,observation_date,location_area,status,source,notes,review_agent_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(watch["subject"],stage,today.isoformat(),watch["location_area"],"suggested","system suggestion",prompt,"research",now,now)); result=dict(conn.execute("SELECT * FROM phenology_observations WHERE id=?",(cur.lastrowid,)).fetchone())
+    await hub.broadcast(); return {"status":"suggested","observation":result}
 
 
 @app.post("/api/stella/daily")

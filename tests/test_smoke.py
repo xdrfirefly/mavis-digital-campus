@@ -7431,3 +7431,21 @@ def test_phenology_observation_suggestion_and_rose_review(tmp_path, monkeypatch)
         assert {entry["status"] for entry in entries} == {"observed", "confirmed", "rejected"}
     finally:
         campus.DB_PATH = original
+
+
+def test_phenology_watchlist_seed_custom_status_and_suggestion(tmp_path, monkeypatch):
+    import asyncio
+    import app as campus
+    original=campus.DB_PATH; monkeypatch.setattr(campus,"DB_PATH",tmp_path/"watch.db")
+    try:
+        campus.init_db()
+        with campus.db() as conn: seeded=campus.environment_summary(conn)["phenology_watchlist"]
+        grapes=next(item for item in seeded if item["subject"]=="Grapes")
+        assert "veraison" in grapes["stages"] and grapes["status"]=="Active"
+        custom=asyncio.run(campus.api_phenology_watchlist_create(campus.PhenologyWatchlistRequest(subject="Pawpaw",category="Food & garden plants",location_area="Fruit Forest",stages=["first bloom","ripe"],notes="")))["watchlist"]
+        assert custom["stages"]==["first bloom","ripe"]
+        asyncio.run(campus.api_phenology_watchlist_status(custom["id"],campus.LibraryCollectionStatusRequest(status="Inactive")))
+        with campus.db() as conn: assert not [x for x in campus.environment_summary(conn)["phenology_observations"] if x["subject"]=="Pawpaw"]
+        suggestion=asyncio.run(campus.api_phenology_watchlist_suggest(grapes["id"]))["observation"]
+        assert suggestion["status"]=="suggested" and suggestion["source"]=="system suggestion"
+    finally: campus.DB_PATH=original
