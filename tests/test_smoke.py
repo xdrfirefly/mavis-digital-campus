@@ -4840,9 +4840,9 @@ def test_v083_memory_capture_edit_and_provenance(tmp_path):
 def test_v083_memory_capture_and_edit_routes_are_wired():
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
-    app_py = (root / "app.py").read_text()
-    js = (root / "static/js/app.js").read_text()
-    html = (root / "static/index.html").read_text()
+    app_py = (root / "app.py").read_text(encoding="utf-8")
+    js = (root / "static/js/app.js").read_text(encoding="utf-8")
+    html = (root / "static/index.html").read_text(encoding="utf-8")
     assert '@app.post("/api/memory/capture")' in app_py
     assert '@app.post("/api/memory/{memory_id}")' in app_py
     assert 'data-memory-capture-kind="note"' in js
@@ -4873,8 +4873,8 @@ def test_v084_memory_governance_schema_and_review_math(tmp_path):
 def test_v084_memory_governance_ui_and_routes():
     from pathlib import Path
     root=Path(__file__).resolve().parents[1]
-    app_py=(root/"app.py").read_text()
-    js=(root/"static/js/app.js").read_text()
+    app_py=(root/"app.py").read_text(encoding="utf-8")
+    js=(root/"static/js/app.js").read_text(encoding="utf-8")
     assert '@app.post("/api/memory/{memory_id}/review")' in app_py
     assert '@app.post("/api/memory/{memory_id}/supersede")' in app_py
     assert 'data-memory-review-filter' in js
@@ -6690,11 +6690,13 @@ def test_v08698_grant_desk_schema_agent_and_state(tmp_path, monkeypatch):
 
 def test_v08698_grant_create_edit_and_briefing(tmp_path, monkeypatch):
     import asyncio
+    from datetime import date, timedelta
     import app as appmod
     monkeypatch.setattr(appmod, 'DB_PATH', tmp_path / 'grant-api.db')
     appmod.init_db()
+    campus_today = date.fromisoformat(appmod.current_state()['environment']['local_date'])
     req = appmod.GrantRequest(
-        funder='Appalachian Future Fund', title='Community Food Education', deadline='2026-09-06',
+        funder='Appalachian Future Fund', title='Community Food Education', deadline=(campus_today + timedelta(days=7)).isoformat(),
         amount_min=10000, amount_max=25000, status='Pursue', mission_fit=5, workload=3,
         restrictions=2, strategic_value=5, recommendation='Pursue', assessment_notes='Strong fit.'
     )
