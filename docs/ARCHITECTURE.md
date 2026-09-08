@@ -26,7 +26,7 @@ Browser state includes an Ask the Campus history stored for the browser session.
 - people, work sessions, and reports: `/api/people`, `/api/work-sessions`, `/api/poe/command`, `/api/work-report`;
 - projects, tasks, approvals, and Chief workflows: `/api/chief/plan`, `/api/projects/*`, `/api/tasks/*`, `/api/approvals/*`;
 - Library intake, catalog, index, collections, playbooks, memory, and repository files: `/api/library/*`, `/api/playbooks*`, `/api/memory*`, `/api/repository/*`;
-- environment, weather, seasons, events, and Stella Daily Steward: `/api/environment/*`, `/api/events*`, `/api/stella/daily`;
+- environment, weather, seasons, human-reviewed phenology, events, and Stella Daily Steward: `/api/environment/*`, `/api/events*`, `/api/stella/daily`;
 - grants and AI controls: `/api/grants*`, `/api/vernadette/command`, `/api/ai/*`.
 
 The application keeps a module-global WebSocket hub and one module-global `workflow_task`; approved plans and demo workflows are launched with `asyncio.create_task`.
@@ -57,7 +57,8 @@ No `mavis.db` was present in the audited checkout; `library/` and `repository/` 
 1. A user request can become a Chief plan, then an explicit human approval. Approved plans run role workflows, save artifacts, enter final review, and may be archived only after the relevant human gate.
 2. Library files move from inbox to human cataloging before they become trusted Library materials. Local text extraction feeds the SQLite search index; the Librarian searches this trusted local index.
 3. Weather refresh optionally queries Weather Underground for the configured station and queries Open-Meteo for forecast data. Results are stored in SQLite and read by the environment UI and Daily Steward.
-4. Ask the Campus routes some requests to deterministic local handlers; configured AI role calls are recorded in `ai_calls` and guarded by the AI controls.
+4. Phenology observations are stored locally with source and review status. System suggestions remain suggestions until a human confirms or rejects them; they do not feed planning in Phase 1.
+5. Ask the Campus routes some requests to deterministic local handlers; configured AI role calls are recorded in `ai_calls` and guarded by the AI controls.
 
 ## Configuration
 

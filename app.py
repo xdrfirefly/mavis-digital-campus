@@ -64,6 +64,8 @@ GRANT_RECOMMENDATIONS = ("Pursue", "Review", "Pass")
 EVENT_TYPES = ("Personal", "Institute", "Class / Program", "Farm", "Deadline", "Meeting", "Other")
 EVENT_COMMITMENT_LEVELS = ("Light", "Normal", "Major")
 EVENT_STATUSES = ("Scheduled", "Cancelled")
+PHENOLOGY_STATUSES = ("suggested", "observed", "confirmed", "rejected")
+PHENOLOGY_SOURCES = ("human observation", "system suggestion", "imported record")
 
 
 def utc_now() -> str:
@@ -612,6 +614,23 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_seasonal_windows_status ON seasonal_windows(status,start_md,end_md);
+
+            CREATE TABLE IF NOT EXISTS phenology_observations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                observation_date TEXT NOT NULL,
+                location_area TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'observed',
+                source TEXT NOT NULL DEFAULT 'human observation',
+                notes TEXT NOT NULL DEFAULT '',
+                review_agent_id TEXT NOT NULL DEFAULT 'research' REFERENCES agents(id) ON DELETE SET DEFAULT,
+                reviewed_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_phenology_observations_date ON phenology_observations(observation_date DESC,id DESC);
+            CREATE INDEX IF NOT EXISTS idx_phenology_observations_status ON phenology_observations(status,observation_date DESC);
 
             CREATE TABLE IF NOT EXISTS playbooks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1927,6 +1946,7 @@ def environment_summary(conn: sqlite3.Connection) -> dict[str, Any]:
             local_now = datetime.now(timezone.utc)
     md = local_now.strftime("%m-%d")
     windows = rows(conn, "SELECT * FROM seasonal_windows ORDER BY category,name,id")
+    phenology = rows(conn, "SELECT * FROM phenology_observations ORDER BY observation_date DESC,id DESC LIMIT 50")
     active = [w for w in windows if w.get("status") == "Active" and _md_active(md, w["start_md"], w["end_md"])]
     today = local_now.date().isoformat()
     weather = rows(conn, "SELECT * FROM weather_daily WHERE forecast_date>=? ORDER BY forecast_date LIMIT 10", (today,))
@@ -1995,6 +2015,7 @@ def environment_summary(conn: sqlite3.Connection) -> dict[str, Any]:
         "moon": moon_cycle_summary(local_now),
         "active_seasonal_windows": active,
         "seasonal_windows": windows,
+        "phenology_observations": phenology,
         "forecast_days": weather,
         "forecast_source": settings.get("forecast_source") or "Open-Meteo",
         "fallback_provider": settings.get("fallback_provider") or "Open-Meteo",
@@ -2017,7 +2038,7 @@ def system_health(conn: sqlite3.Connection) -> dict[str, Any]:
         "chief_plans","research_artifacts","programs_artifacts","chief_review_artifacts",
         "workflow_runs","chief_request_submissions","schema_meta","deliverables","revision_requests","revision_plans","project_files","institutional_memory","playbooks","briefing_snapshots",
         "library_collections","library_materials","library_material_index","library_inbox","programs_library_preflights","program_archive_events",
-        "environment_settings","weather_current","weather_daily","seasonal_windows",
+        "environment_settings","weather_current","weather_daily","seasonal_windows","phenology_observations",
     }
     tables = {
         row[0]
@@ -7119,6 +7140,21 @@ class SeasonalWindowRequest(BaseModel):
     status: str = "Active"
 
 
+class PhenologyObservationRequest(BaseModel):
+    subject: str
+    stage: str
+    observation_date: str
+    location_area: str
+    source: str = "human observation"
+    status: str = "observed"
+    notes: str = ""
+
+
+class PhenologyReviewRequest(BaseModel):
+    status: str
+    notes: str = ""
+
+
 class PersonRequest(BaseModel):
     display_name: str
     person_type: str = "Volunteer"
@@ -8113,6 +8149,58 @@ async def api_environment_seasonal_status(window_id: int, req: LibraryCollection
         result=environment_summary(conn)
     await hub.broadcast()
     return result
+
+
+def _phenology_text(value: str, field: str, limit: int) -> str:
+    cleaned = " ".join(str(value or "").split()).strip()[:limit]
+    if not cleaned:
+        raise HTTPException(status_code=400, detail=f"Phenology {field} is required.")
+    return cleaned
+
+
+@app.post("/api/environment/phenology")
+async def api_phenology_create(req: PhenologyObservationRequest) -> dict[str, Any]:
+    try:
+        observation_date = date.fromisoformat(req.observation_date.strip()).isoformat()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Phenology observation date must use YYYY-MM-DD.")
+    source = req.source if req.source in PHENOLOGY_SOURCES else "human observation"
+    status = req.status if req.status in PHENOLOGY_STATUSES else "observed"
+    if source == "system suggestion":
+        status = "suggested"
+    elif status == "suggested":
+        raise HTTPException(status_code=400, detail="Only a system suggestion may use suggested status.")
+    with db() as conn:
+        now = utc_now()
+        cursor = conn.execute(
+            """INSERT INTO phenology_observations(subject,stage,observation_date,location_area,status,source,notes,review_agent_id,created_at,updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            (_phenology_text(req.subject,"subject",180), _phenology_text(req.stage,"stage",120), observation_date,
+             _phenology_text(req.location_area,"location",180), status, source, " ".join(req.notes.split()).strip()[:1000], "research", now, now),
+        )
+        log(conn,"phenology","Rose",f"Recorded {status} phenology entry: {req.subject} — {req.stage}.")
+        result = dict(conn.execute("SELECT * FROM phenology_observations WHERE id=?", (cursor.lastrowid,)).fetchone())
+    await hub.broadcast()
+    return {"status": "created", "observation": result}
+
+
+@app.post("/api/environment/phenology/{observation_id}/review")
+async def api_phenology_review(observation_id: int, req: PhenologyReviewRequest) -> dict[str, Any]:
+    if req.status not in {"confirmed", "rejected"}:
+        raise HTTPException(status_code=400, detail="Phenology review status must be confirmed or rejected.")
+    with db() as conn:
+        row = conn.execute("SELECT * FROM phenology_observations WHERE id=?", (observation_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Phenology observation not found.")
+        if row["status"] != "suggested":
+            raise HTTPException(status_code=409, detail="Only suggested phenology observations can be confirmed or rejected.")
+        now = utc_now()
+        notes = " ".join(req.notes.split()).strip()[:1000] or row["notes"]
+        conn.execute("UPDATE phenology_observations SET status=?,notes=?,review_agent_id='research',reviewed_at=?,updated_at=? WHERE id=?", (req.status,notes,now,now,observation_id))
+        log(conn,"phenology","Rose",f"{req.status.title()} phenology suggestion: {row['subject']} — {row['stage']}.")
+        result = dict(conn.execute("SELECT * FROM phenology_observations WHERE id=?", (observation_id,)).fetchone())
+    await hub.broadcast()
+    return {"status": req.status, "observation": result}
 
 
 @app.post("/api/stella/daily")

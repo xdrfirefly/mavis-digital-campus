@@ -1127,6 +1127,7 @@ function drawerLibrary(){
 function drawerEnvironment(){
   const env=state.environment||{};
   const windows=env.seasonal_windows||[];
+  const phenology=env.phenology_observations||[];
   const active=env.active_seasonal_windows||[];
   const days=env.forecast_days||[];
   const current=env.current_conditions||null;
@@ -1171,6 +1172,10 @@ function drawerEnvironment(){
   <section class="drawer-section"><div class="section-row"><h4>Seasonal Windows</h4><span>customizable</span></div>
     <form class="memory-form" data-seasonal-window-form><div class="memory-form-grid"><label>Name<input name="name" required placeholder="Garlic planting window"></label><label>Category<input name="category" value="Farm Window"></label><label>Priority<select name="priority"><option>Normal</option><option>High</option><option>Low</option></select></label></div><div class="memory-form-grid"><label>Start MM-DD<input name="start_md" placeholder="10-01" required></label><label>End MM-DD<input name="end_md" placeholder="11-15" required></label></div><label>Notes<textarea name="notes" rows="2" placeholder="What changes during this window?"></textarea></label><div class="memory-form-actions"><button type="submit">Add Seasonal Window</button></div></form>
     <div class="memory-list">${windows.map(w=>`<article class="memory-card ${w.status==='Archived'?'archived':''}"><div class="memory-icon">◐</div><div class="memory-copy"><span class="memory-meta">${esc(w.category)} · ${esc(w.start_md)} → ${esc(w.end_md)}</span><strong>${esc(w.name)}</strong><p>${esc(w.notes||'')}</p><small>${esc(w.status)} · ${esc(w.priority)}</small></div><div class="memory-actions"><button type="button" data-seasonal-status="${w.id}" data-seasonal-status-value="${w.status==='Archived'?'Active':'Archived'}">${w.status==='Archived'?'Restore':'Archive'}</button></div></article>`).join('')}</div>
+  </section>
+  <section class="drawer-section"><div class="section-row"><h4>Phenology</h4><span>Rose review</span></div><p>Record what was actually observed. Suggestions remain unconfirmed until a person reviews them.</p>
+    <form class="memory-form" data-phenology-form><div class="memory-form-grid"><label>Subject / indicator<input name="subject" required placeholder="Apple tree or spring peepers"></label><label>Stage / event<select name="stage"><option>bud break</option><option>first leaf</option><option>first bloom</option><option>full bloom</option><option>fruit set</option><option>ripening</option><option>harvest</option><option>leaf color</option><option>leaf fall</option><option>first seen</option><option>first heard</option><option>emergence</option><option>nesting</option><option>migration / arrival</option><option>first frost</option><option>first hard freeze</option><option>first snow</option><option>soil workable</option><option>spring peepers</option><option>fireflies</option><option>peak fall color</option></select></label></div><div class="memory-form-grid"><label>Date<input type="date" name="observation_date" value="${esc(today)}" required></label><label>Location / area<input name="location_area" required placeholder="Fruit Forest"></label></div><label>Notes<textarea name="notes" rows="2" placeholder="What did you actually see or hear?"></textarea></label><div class="memory-form-actions"><button type="submit">Add Observation</button></div></form>
+    ${phenology.length?`<div class="memory-list">${phenology.map(p=>`<article class="memory-card"><div class="memory-icon">◉</div><div class="memory-copy"><span class="memory-meta">${esc(p.observation_date)} · ${esc(p.location_area)} · ${esc(p.source)}</span><strong>${esc(p.subject)} — ${esc(p.stage)}</strong><p>${esc(p.notes||'')}</p><small>${esc(p.status)} · Rose review</small></div>${p.status==='suggested'?`<div class="memory-actions"><button type="button" data-phenology-review="${p.id}" data-phenology-status="confirmed">Confirm</button><button type="button" data-phenology-review="${p.id}" data-phenology-status="rejected">Reject</button></div>`:''}</article>`).join('')}</div>`:'<div class="output-empty"><strong>No phenology observations yet.</strong><span>Begin with a direct observation from the land.</span></div>'}
   </section>`;
 }
 
@@ -2384,6 +2389,8 @@ async function saveSeasonalWindow(form){
   try{await post('/api/environment/seasonal-windows',{name:fd.get('name'),category:fd.get('category'),start_md:fd.get('start_md'),end_md:fd.get('end_md'),priority:fd.get('priority'),notes:fd.get('notes'),status:'Active'});toast('Seasonal window added.');openDrawer('environment');}catch(err){toast(err.message);}
 }
 async function setSeasonalStatus(id,status){try{await post(`/api/environment/seasonal-windows/${id}/status`,{status});toast(`Seasonal window ${String(status).toLowerCase()}.`);openDrawer('environment');}catch(err){toast(err.message);}}
+async function savePhenology(form){const fd=new FormData(form);try{await post('/api/environment/phenology',{subject:fd.get('subject'),stage:fd.get('stage'),observation_date:fd.get('observation_date'),location_area:fd.get('location_area'),source:'human observation',status:'observed',notes:fd.get('notes')});toast('Phenology observation recorded.');openDrawer('environment');}catch(err){toast(err.message);}}
+async function reviewPhenology(id,status){try{await post(`/api/environment/phenology/${id}/review`,{status});toast(`Phenology suggestion ${status}.`);openDrawer('environment');}catch(err){toast(err.message);}}
 
 
 function setFocusWorkspace(enabled){
@@ -2592,6 +2599,7 @@ els.drawerBody.addEventListener('click',e=>{
   else if(btn.dataset.libraryStatus)setLibraryStatus(btn.dataset.libraryStatus,btn.dataset.libraryStatusValue);
   else if(btn.hasAttribute('data-weather-refresh'))refreshWeather();
   else if(btn.dataset.seasonalStatus)setSeasonalStatus(btn.dataset.seasonalStatus,btn.dataset.seasonalStatusValue);
+  else if(btn.dataset.phenologyReview)reviewPhenology(btn.dataset.phenologyReview,btn.dataset.phenologyStatus);
   else if(btn.hasAttribute('data-save-briefing'))saveBriefingSnapshot();
   else if(btn.hasAttribute('data-work-report-reset')){workReportFilters={person_id:'',activity_category_id:'',project_id:'',participation_type:'',start_date:'',end_date:''};workReport=null;loadWorkReport();}
   else if(btn.dataset.grantImportSource)importGrantDiscovery(btn.dataset.grantImportSource);
@@ -2662,6 +2670,7 @@ els.drawerBody.addEventListener('submit',e=>{
   if(form.hasAttribute('data-environment-settings-form')){saveEnvironmentSettings(form);return;}
   if(form.hasAttribute('data-weather-day-form')){saveWeatherDay(form);return;}
   if(form.hasAttribute('data-seasonal-window-form')){saveSeasonalWindow(form);return;}
+  if(form.hasAttribute('data-phenology-form')){savePhenology(form);return;}
   if(form.hasAttribute('data-work-report-form')){loadWorkReport(readWorkReportFilters(form));return;}
   if(form.hasAttribute('data-poe-command-form')){sendPoeCommand(form);return;}
   if(form.hasAttribute('data-vernadette-command-form')){sendVernadetteCommand(form);return;}

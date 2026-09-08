@@ -7395,3 +7395,39 @@ def test_v08742_living_campus_ambient_movement_and_newest_first_ask_history():
     assert "CAMPUS_ASK_HISTORY_LIMIT = 20" in js
     assert "Newest response first · scroll down for older exchanges" in js
     assert "max-height:390px" in app_css and "overflow-y:auto" in app_css
+
+
+def test_phenology_observation_suggestion_and_rose_review(tmp_path, monkeypatch):
+    import asyncio
+    import app as campus
+    original = campus.DB_PATH
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "phenology.db")
+    try:
+        campus.init_db()
+        manual = asyncio.run(campus.api_phenology_create(campus.PhenologyObservationRequest(
+            subject="Apple tree", stage="first bloom", observation_date="2026-04-11",
+            location_area="Fruit Forest", source="human observation", status="observed", notes="Three open blossoms."
+        )))
+        assert manual["observation"]["status"] == "observed"
+        assert manual["observation"]["source"] == "human observation"
+        assert manual["observation"]["location_area"] == "Fruit Forest"
+        suggested = asyncio.run(campus.api_phenology_create(campus.PhenologyObservationRequest(
+            subject="Spring peepers", stage="first heard", observation_date="2026-03-18",
+            location_area="Pond", source="system suggestion", status="confirmed", notes="Please verify."
+        )))
+        assert suggested["observation"]["status"] == "suggested"
+        confirmed = asyncio.run(campus.api_phenology_review(suggested["observation"]["id"], campus.PhenologyReviewRequest(status="confirmed")))
+        assert confirmed["observation"]["status"] == "confirmed"
+        assert confirmed["observation"]["review_agent_id"] == "research"
+        rejected = asyncio.run(campus.api_phenology_create(campus.PhenologyObservationRequest(
+            subject="Frost", stage="first frost", observation_date="2026-10-09",
+            location_area="Mavis Manor", source="system suggestion", notes="Near-freezing reading."
+        )))
+        reviewed = asyncio.run(campus.api_phenology_review(rejected["observation"]["id"], campus.PhenologyReviewRequest(status="rejected", notes="No frost observed.")))
+        assert reviewed["observation"]["status"] == "rejected"
+        assert reviewed["observation"]["notes"] == "No frost observed."
+        with campus.db() as conn:
+            entries = campus.environment_summary(conn)["phenology_observations"]
+        assert {entry["status"] for entry in entries} == {"observed", "confirmed", "rejected"}
+    finally:
+        campus.DB_PATH = original
