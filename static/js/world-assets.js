@@ -5,10 +5,12 @@ export const assets = {
     library: '/static/assets/buildings/library-of-mavis/map-sprite.png',
   },
   agents: {
-    chief: '/static/assets/agents/chief-of-staff/map-sprite.png',
-    programs: '/static/assets/agents/programs/map-sprite.png',
-    research: '/static/assets/agents/research/map-sprite.png',
-    caretaker: '/static/assets/agents/caretaker/map-sprite.png',
+    chief: '/static/assets/agents/stella-sprite.png',
+    programs: '/static/assets/agents/percy-sprite.png',
+    research: '/static/assets/agents/rose-sprite.png',
+    caretaker: '/static/assets/agents/stewart-sprite.png',
+    grants: '/static/assets/agents/vernadette-sprite.png',
+    operations: '/static/assets/agents/poe-sprite.png',
   },
   vegetation: {
     red: '/static/assets/vegetation/fruit-tree-red.svg',

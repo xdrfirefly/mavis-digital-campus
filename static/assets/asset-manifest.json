@@ -6,8 +6,8 @@
       "canonical_version": 3,
       "master_sheet": "/static/assets/agents/chief-of-staff/master-sheet.png",
       "portrait": "/static/assets/agents/chief-of-staff/portrait.jpg",
-      "map_sprite": "/static/assets/agents/chief-of-staff/map-sprite.png",
-      "status": "approved-concept-derived-v0.6.3"
+      "map_sprite": "/static/assets/agents/stella-sprite.png",
+      "status": "canonical-walking-sheet"
     },
     "coopenheimer_barn": {
       "canonical_version": 3,
@@ -21,15 +21,15 @@
       "canonical_version": 1,
       "master_sheet": "/static/assets/agents/programs/master-sheet.png",
       "portrait": "/static/assets/agents/programs/portrait.jpg",
-      "map_sprite": "/static/assets/agents/programs/map-sprite.png",
-      "status": "approved-concept-derived-v0.6.4"
+      "map_sprite": "/static/assets/agents/percy-sprite.png",
+      "status": "canonical-walking-sheet"
     },
     "research": {
       "canonical_version": 1,
       "master_sheet": "/static/assets/agents/research/master-sheet.png",
       "portrait": "/static/assets/agents/research/portrait.jpg",
-      "map_sprite": "/static/assets/agents/research/map-sprite.png",
-      "status": "approved-concept-derived-v0.6.4"
+      "map_sprite": "/static/assets/agents/rose-sprite.png",
+      "status": "canonical-walking-sheet"
     },
     "mavis_manor": {
       "canonical_version": 1,
@@ -51,8 +51,18 @@
       "canonical_version": 1,
       "master_sheet": "/static/assets/agents/caretaker/master-sheet.png",
       "portrait": "/static/assets/agents/caretaker/portrait.jpg",
-      "map_sprite": "/static/assets/agents/caretaker/map-sprite.png",
-      "status": "approved-concept-derived-v0.6.4"
+      "map_sprite": "/static/assets/agents/stewart-sprite.png",
+      "status": "canonical-walking-sheet"
+    },
+    "operations": {
+      "canonical_version": 1,
+      "map_sprite": "/static/assets/agents/poe-sprite.png",
+      "status": "canonical-walking-sheet"
+    },
+    "grants": {
+      "canonical_version": 1,
+      "map_sprite": "/static/assets/agents/vernadette-sprite.png",
+      "status": "canonical-walking-sheet"
     },
     "environment_world_pass": {
       "canonical_version": 3,
@@ -538,8 +548,8 @@
     "medicaid_rules_engine": false,
     "grant_reporting_rules": false,
     "paid_payroll": false,
-    "provisional_visual": "css_black_purple_blue_eyes",
-    "canonical_sprite_pending": true,
+    "canonical_walking_sprite": "/static/assets/agents/poe-sprite.png",
+    "canonical_sprite_pending": false,
     "natural_language_parser": "deterministic_local",
     "natural_language_ai_calls": 0,
     "natural_language_web_calls": 0,

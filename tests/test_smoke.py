@@ -71,28 +71,37 @@ def test_v063_canonical_assets():
 
     barn = ROOT / "static/assets/buildings/coopenheimer-barn/map-sprite.png"
     barn_medium = ROOT / "static/assets/buildings/coopenheimer-barn/medium-sprite.png"
-    chief = ROOT / "static/assets/agents/chief-of-staff/map-sprite.png"
+    agent_sprites = {
+        "chief": "stella-sprite.png",
+        "programs": "percy-sprite.png",
+        "research": "rose-sprite.png",
+        "caretaker": "stewart-sprite.png",
+        "grants": "vernadette-sprite.png",
+        "operations": "poe-sprite.png",
+    }
     world_assets = (ROOT / "static/js/world-assets.js").read_text(encoding="utf-8")
     world_css = (ROOT / "static/css/world.css").read_text(encoding="utf-8")
 
     assert barn.exists()
     assert barn_medium.exists()
-    assert chief.exists()
     assert "coopenheimer-barn/map-sprite.png" in world_assets
-    assert "chief-of-staff/map-sprite.png" in world_assets
+    for agent_id, filename in agent_sprites.items():
+        sprite = ROOT / "static/assets/agents" / filename
+        assert sprite.exists(), sprite
+        assert f"{agent_id}: '/static/assets/agents/{filename}'" in world_assets
+        with Image.open(sprite) as img:
+            assert img.mode == "RGBA"
+            assert img.size == (1254, 1254)
+            assert img.getchannel("A").getbbox() is not None
     assert ".building-hit.barn{width:310px}" in world_css
+    assert "background-size:192px 192px" in world_css
+    assert "background-position:-48px -192px" in world_css
 
     with Image.open(barn) as img:
         assert img.mode == "RGBA"
         assert img.width >= 400
         assert img.height >= 180
         assert img.getchannel("A").getbbox() is not None
-
-    with Image.open(chief) as img:
-        assert img.mode == "RGBA"
-        assert img.size == (128, 48)
-        assert img.getchannel("A").getbbox() is not None
-
 
 def test_v063_location_panel_stays_repaired():
     world_css = (ROOT / "static/css/world.css").read_text(encoding="utf-8")
@@ -101,36 +110,22 @@ def test_v063_location_panel_stays_repaired():
 
 
 def test_v064_staff_integration():
-    from PIL import Image
     state_files = [
         ROOT / "static/assets/agents/programs/master-sheet.png",
         ROOT / "static/assets/agents/programs/portrait.jpg",
-        ROOT / "static/assets/agents/programs/map-sprite.png",
         ROOT / "static/assets/agents/research/master-sheet.png",
         ROOT / "static/assets/agents/research/portrait.jpg",
-        ROOT / "static/assets/agents/research/map-sprite.png",
         ROOT / "static/assets/agents/caretaker/master-sheet.png",
         ROOT / "static/assets/agents/caretaker/portrait.jpg",
-        ROOT / "static/assets/agents/caretaker/map-sprite.png",
     ]
     for p in state_files:
         assert p.exists(), p
-
-    for rel in [
-        "static/assets/agents/programs/map-sprite.png",
-        "static/assets/agents/research/map-sprite.png",
-        "static/assets/agents/caretaker/map-sprite.png",
-    ]:
-        with Image.open(ROOT / rel) as img:
-            assert img.mode == "RGBA"
-            assert img.size == (128,48)
-            assert img.getchannel("A").getbbox() is not None
 
     app = (ROOT / "app.py").read_text(encoding="utf-8")
     world_assets = (ROOT / "static/js/world-assets.js").read_text(encoding="utf-8")
     index = (ROOT / "static/index.html").read_text(encoding="utf-8")
     assert '"caretaker", "Stewart", "Land Steward · Grounds, Infrastructure & Living Systems"' in app
-    assert "caretaker: '/static/assets/agents/caretaker/map-sprite.png'" in world_assets
+    assert "caretaker: '/static/assets/agents/stewart-sprite.png'" in world_assets
     assert 'data-open-agent="caretaker"' in index
 
 
@@ -322,6 +317,8 @@ def test_v0610_removed_north_pond_bridge():
 
 
 def test_v074_ai_provider_files_and_secret_protection():
+    import shutil
+    import subprocess
     env_example=(ROOT/'.env.example').read_text(encoding='utf-8')
     gitignore=(ROOT/'.gitignore').read_text(encoding='utf-8')
     index=(ROOT/'static/index.html').read_text(encoding='utf-8')
@@ -335,8 +332,24 @@ def test_v074_ai_provider_files_and_secret_protection():
     assert 'OPENAI_API_KEY=PASTE_YOUR_OPENAI_KEY_HERE' in env_example
     assert 'OPENAI_MODEL=gpt-5.6-terra' in env_example
     assert 'PROGRAMS_PROVIDER=openai' in env_example
-    assert '.env' in gitignore
-    assert not (ROOT/'.env').exists()
+    ignore_rules = {line.strip() for line in gitignore.splitlines()}
+    assert {'.env', '.env.*', '!.env.example'}.issubset(ignore_rules)
+    git = shutil.which('git')
+    if git:
+        assert subprocess.run(
+            [git, 'check-ignore', '--quiet', '--', '.env'],
+            cwd=ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        ).returncode == 0
+        assert subprocess.run(
+            [git, 'ls-files', '--error-unmatch', '--', '.env'],
+            cwd=ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        ).returncode == 1
     assert 'AI Providers' in index
     assert 'Test Gemini' in index
     assert 'Test OpenAI' in index
@@ -6191,9 +6204,7 @@ def test_v08698_pws_weather_defaults_and_separation(tmp_path, monkeypatch):
     import app as campus
     original = campus.DB_PATH
     campus.DB_PATH = tmp_path / "mavis.db"
-    monkeypatch.delenv("WEATHER_UNDERGROUND_API_KEY", raising=False)
-    monkeypatch.delenv("WUNDERGROUND_API_KEY", raising=False)
-    monkeypatch.delenv("WEATHER_COM_API_KEY", raising=False)
+    monkeypatch.setattr(campus, "weather_underground_key_available", lambda: False)
     try:
         campus.init_db()
         with campus.db() as conn:
@@ -6432,7 +6443,7 @@ def test_v08698_work_correction_preserves_audit(tmp_path, monkeypatch):
     assert actions[:3] == ['edit','clock_out','clock_in']
 
 
-def test_v08698_people_ui_and_poe_provisional_identity():
+def test_v08698_people_ui_and_poe_sprite_identity():
     index = (ROOT / 'static/index.html').read_text(encoding='utf-8')
     js = (ROOT / 'static/js/app.js').read_text(encoding='utf-8')
     css = (ROOT / 'static/css/world.css').read_text(encoding='utf-8')
@@ -6442,8 +6453,8 @@ def test_v08698_people_ui_and_poe_provisional_identity():
     assert 'data-clock-in-form' in js
     assert 'data-work-clock-out' in js
     assert '/api/work-sessions/clock-in' in js
-    assert '.agent-token.operations .agent-sprite' in css
-    assert '#69c9ff' in css
+    assert "operations: '/static/assets/agents/poe-sprite.png'" in (ROOT / 'static/js/world-assets.js').read_text(encoding='utf-8')
+    assert '.agent-token.operations .agent-sprite' not in css
 
 
 
@@ -6742,7 +6753,8 @@ def test_v08698_grant_ui_and_cache_key():
     assert 'data-grant-form' in js
     assert '/api/grants' in js
     assert '.vernadette-callout' in css
-    assert '.agent-token.grants .agent-sprite' in world
+    assert "grants: '/static/assets/agents/vernadette-sprite.png'" in (ROOT / 'static/js/world-assets.js').read_text(encoding='utf-8')
+    assert '.agent-token.grants .agent-sprite' not in world
 
 
 
