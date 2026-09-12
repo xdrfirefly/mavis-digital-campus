@@ -59,6 +59,9 @@ No `mavis.db` was present in the audited checkout; `library/` and `repository/` 
 3. Weather refresh optionally queries Weather Underground for the configured station and queries Open-Meteo for forecast data. Results are stored in SQLite and read by the environment UI and Daily Steward.
 4. Phenology observations are stored locally with source and review status. Rose can compare trusted observed/confirmed records by normalized subject and stage across years; suggestions remain excluded until human review and phenology does not feed planning.
 5. Ask the Campus routes some requests to deterministic local handlers; configured AI role calls are recorded in `ai_calls` and guarded by the AI controls.
+6. Daily Steward reads scheduled events explicitly linked to active projects within a 14-day look-ahead. It adds a bounded boost to that project's already-recorded next task (18 points at 0–3 days, 12 at 4–7, and 6 at 8–14), labels the task only as supporting the named dated commitment, and performs no writes. Unlinked, inactive, cancelled, completed, past, and more-distant events do not influence task priority; approvals, blockers, calendar workload limits, weather adjustments, and the three-item maximum remain authoritative.
+
+The next planned operating-cycle layer is a durable community-contribution ledger covering received contributions, outstanding offers, thank-yous, and follow-ups. Personal/nonprofit visibility and permissions require a separate design before shared access is expanded.
 
 ## Configuration
 

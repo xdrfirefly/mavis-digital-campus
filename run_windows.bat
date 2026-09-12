@@ -9,10 +9,16 @@ echo ===============================================
 echo.
 
 set "PY_EXE="
-where python3 >nul 2>&1
-if %errorlevel%==0 (
-  python3 --version >nul 2>&1
-  if %errorlevel%==0 set "PY_EXE=python3"
+if exist ".venv\Scripts\python.exe" (
+  ".venv\Scripts\python.exe" --version >nul 2>&1
+  if not errorlevel 1 set "PY_EXE=.venv\Scripts\python.exe"
+)
+if not defined PY_EXE (
+  where python3 >nul 2>&1
+  if %errorlevel%==0 (
+    python3 --version >nul 2>&1
+    if %errorlevel%==0 set "PY_EXE=python3"
+  )
 )
 if not defined PY_EXE (
   where py >nul 2>&1

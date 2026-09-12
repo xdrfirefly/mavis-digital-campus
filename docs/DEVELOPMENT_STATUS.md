@@ -7,6 +7,7 @@ Audit scope: repository contents as inspected on 2026-09-07. This document does 
 - FastAPI/SQLite campus application with static campus-map UI, canonical assets, WebSocket refreshes, and seeded buildings/agents.
 - Projects, tasks, approvals, revision workflows, role artifacts, notes, activity log, and AI control/cost records.
 - Stella Daily Steward and Ask the Campus routing, including deterministic local paths and optional role AI advice.
+- Daily Steward's Library Class Commitment Spine uses scheduled, explicitly project-linked events in a 14-day look-ahead to support that active project's existing next task. The bounded date boost is 18 points at 0–3 days, 12 at 4–7 days, and 6 at 8–14 days; it remains below human-gate and blocker precedence, creates no work, and does not assume that a task is preparation.
 - Trusted Library intake, human cataloging, local text extraction/indexing, collections, playbooks, and institutional-memory records.
 - People ledger, work sessions with audit records, clock in/out, deterministic Poe commands, reports, and CSV export.
 - Events/calendar foundation, local moon calculation, weather/seasonal data storage and refresh adapter.
@@ -27,6 +28,8 @@ Audit scope: repository contents as inspected on 2026-09-07. This document does 
 
 - Google Calendar synchronization is explicitly shown as disconnected/deferred in code/tests and README history.
 - The product canon includes Plant/Living System and Property Asset concepts; no corresponding standalone SQLite tables were found.
+- The next operating-cycle milestone is durable community contribution tracking for donations, goods, services, equipment/space, introductions/outreach, outstanding offers, thank-yous, and follow-ups. It is not implemented in the Commitment Spine.
+- Personal/nonprofit permissions require a separate design before shared access is expanded.
 - The README identifies future integrations such as broader grant sources and additional operational automation; they were not treated as implemented.
 
 ## Technical Risks

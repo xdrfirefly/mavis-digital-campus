@@ -4066,6 +4066,18 @@ def _calendar_event_time_label(event: dict[str, Any]) -> str:
     return start or "time not set"
 
 
+DAILY_STEWARD_COMMITMENT_LOOKAHEAD_DAYS = 14
+
+
+def _daily_steward_commitment_boost(days_until: int) -> int:
+    """Bounded support for work already linked to an approaching commitment."""
+    if days_until <= 3:
+        return 18
+    if days_until <= 7:
+        return 12
+    return 6
+
+
 def daily_steward(conn: sqlite3.Connection) -> dict[str, Any]:
     """Stella's deterministic ADHD-friendly daily focus layer.
 
@@ -4079,6 +4091,19 @@ def daily_steward(conn: sqlite3.Connection) -> dict[str, Any]:
     calendar = calendar_summary(conn, local_today)
     today_events = list(calendar.get("today") or [])
     major_today = int(calendar.get("major_today_count") or 0)
+    commitment_horizon = (local_today + timedelta(days=DAILY_STEWARD_COMMITMENT_LOOKAHEAD_DAYS)).isoformat()
+    linked_commitments: dict[int, dict[str, Any]] = {}
+    for event in rows(conn, """
+        SELECT e.id,e.title,e.event_date,e.project_id
+        FROM events e
+        JOIN projects p ON p.id=e.project_id
+        WHERE e.status='Scheduled' AND e.project_id IS NOT NULL AND p.status='Active'
+          AND e.event_date>=? AND e.event_date<=?
+        ORDER BY e.event_date,e.id
+    """, (local_today.isoformat(), commitment_horizon)):
+        project_id = int(event["project_id"])
+        if project_id not in linked_commitments:
+            linked_commitments[project_id] = event
     # A real calendar commitment should reduce how many additional work threads Stella opens.
     if major_today >= 2 or len(today_events) >= 3:
         focus_cap = 1
@@ -4190,6 +4215,22 @@ def daily_steward(conn: sqlite3.Connection) -> dict[str, Any]:
         else: score += int(weather.get("indoor_adjustment") or 0)
         if task.get("status") == "In Progress": score += 8
         if task.get("status") == "Library Review": score += 10
+        commitment = linked_commitments.get(project_id)
+        commitment_reason = ""
+        commitment_links: dict[str, Any] = {}
+        if commitment:
+            days_until = (date.fromisoformat(str(commitment["event_date"])) - local_today).days
+            # Never let commitment proximity overtake the existing blocked-task tier (98).
+            score = min(score + _daily_steward_commitment_boost(days_until), 97)
+            commitment_reason = (
+                f" This recorded task supports the linked commitment "
+                f"{commitment['title']} on {commitment['event_date']}; its specific purpose is not assumed."
+            )
+            commitment_links = {
+                "commitment_event_id": commitment.get("id"),
+                "commitment_event_title": commitment.get("title"),
+                "commitment_event_date": commitment.get("event_date"),
+            }
         lane = {
             "programs":"Percy has this as the next recorded education/program task.",
             "caretaker":"Stewart has this as the next recorded land or living-systems task.",
@@ -4205,9 +4246,9 @@ def daily_steward(conn: sqlite3.Connection) -> dict[str, Any]:
             weather_reason = " The forecast makes outdoor work less favorable, so only keep this high if it cannot wait."
         add(
             score, kind="task", agent_id=owner, title=str(task.get("title") or "Next project task"),
-            why=f"{lane}{weather_reason} Project: {task.get('project_title') or 'Untitled'}.",
+            why=f"{lane}{weather_reason}{commitment_reason} Project: {task.get('project_title') or 'Untitled'}.",
             first_action="Open this task and do only the smallest concrete next step before deciding whether to continue.",
-            task_id=task.get("id"), project_id=task.get("project_id"),
+            task_id=task.get("id"), project_id=task.get("project_id"), **commitment_links,
         )
 
     # Deterministic selection, capped at three to protect attention.

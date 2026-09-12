@@ -7203,6 +7203,130 @@ def test_v08742_calendar_major_commitment_reduces_stella_focus(tmp_path, monkeyp
         campus.DB_PATH=original
 
 
+def test_daily_steward_linked_commitment_supports_existing_project_task(tmp_path, monkeypatch):
+    import app as campus
+    original = campus.DB_PATH
+    campus.DB_PATH = tmp_path / "linked-commitment.db"
+    try:
+        campus.init_db()
+        with campus.db() as conn:
+            today = campus.date.fromisoformat(campus.environment_summary(conn)["local_date"])
+            event_date = (today + campus.timedelta(days=2)).isoformat()
+            now = campus.utc_now()
+            linked_project = int(conn.execute(
+                "INSERT INTO projects(title,status,created_at,updated_at) VALUES(?,?,?,?)",
+                ("Library Class", "Active", now, now),
+            ).lastrowid)
+            other_project = int(conn.execute(
+                "INSERT INTO projects(title,status,created_at,updated_at) VALUES(?,?,?,?)",
+                ("Other Program", "Active", now, now),
+            ).lastrowid)
+            conn.execute(
+                "INSERT INTO tasks(project_id,title,owner_agent_id,status,sequence,brief,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                (linked_project, "Review class handout", "research", "Waiting", 1, "", now, now),
+            )
+            conn.execute(
+                "INSERT INTO tasks(project_id,title,owner_agent_id,status,sequence,brief,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                (other_project, "Plan another workshop", "programs", "Waiting", 1, "", now, now),
+            )
+            event_id = int(conn.execute(
+                "INSERT INTO events(title,event_date,all_day,location,event_type,commitment_level,project_id,notes,status,created_by,created_at,updated_at) VALUES(?,?,1,?,?,?,?,?,?,?,?,?)",
+                ("Digital Preservation at the Library", event_date, "Library", "Class / Program", "Normal", linked_project, "", "Scheduled", "Human", now, now),
+            ).lastrowid)
+            before = {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in ("projects", "tasks", "events")}
+            steward = campus.daily_steward(conn)
+            after = {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in before}
+        assert steward["focus"][0]["title"] == "Review class handout"
+        assert steward["focus"][0]["commitment_event_id"] == event_id
+        assert steward["focus"][0]["commitment_event_date"] == event_date
+        assert "Digital Preservation at the Library" in steward["focus"][0]["why"]
+        assert event_date in steward["focus"][0]["why"]
+        assert "specific purpose is not assumed" in steward["focus"][0]["why"]
+        assert before == after
+    finally:
+        campus.DB_PATH = original
+
+
+def test_daily_steward_ignores_unlinked_inactive_and_distant_events(tmp_path, monkeypatch):
+    import app as campus
+    original = campus.DB_PATH
+    campus.DB_PATH = tmp_path / "ineligible-commitments.db"
+    try:
+        campus.init_db()
+        with campus.db() as conn:
+            today = campus.date.fromisoformat(campus.environment_summary(conn)["local_date"])
+            now = campus.utc_now()
+            projects = []
+            for index, owner in enumerate(("research", "research", "research", "programs"), 1):
+                project_id = int(conn.execute(
+                    "INSERT INTO projects(title,status,created_at,updated_at) VALUES(?,?,?,?)",
+                    (f"Project {index}", "Active", now, now),
+                ).lastrowid)
+                projects.append(project_id)
+                conn.execute(
+                    "INSERT INTO tasks(project_id,title,owner_agent_id,status,sequence,brief,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                    (project_id, f"Task {index}", owner, "Waiting", 1, "", now, now),
+                )
+            non_active_project = int(conn.execute(
+                "INSERT INTO projects(title,status,created_at,updated_at) VALUES(?,?,?,?)",
+                ("Awaiting Library Decision", "Awaiting Library Decision", now, now),
+            ).lastrowid)
+            conn.execute(
+                "INSERT INTO tasks(project_id,title,owner_agent_id,status,sequence,brief,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                (non_active_project, "Task 5", "research", "In Progress", 1, "", now, now),
+            )
+            events = [
+                ("Unlinked class", 2, None, "Scheduled"),
+                ("Cancelled class", 2, projects[1], "Cancelled"),
+                ("Distant class", campus.DAILY_STEWARD_COMMITMENT_LOOKAHEAD_DAYS + 1, projects[2], "Scheduled"),
+                ("Non-active project class", 1, non_active_project, "Scheduled"),
+            ]
+            for title, days, project_id, status in events:
+                conn.execute(
+                    "INSERT INTO events(title,event_date,all_day,location,event_type,commitment_level,project_id,notes,status,created_by,created_at,updated_at) VALUES(?,?,1,?,?,?,?,?,?,?,?,?)",
+                    (title, (today + campus.timedelta(days=days)).isoformat(), "Library", "Class / Program", "Normal", project_id, "", status, "Human", now, now),
+                )
+            steward = campus.daily_steward(conn)
+        assert steward["focus"][0]["title"] == "Task 5"
+        assert all("commitment_event_id" not in item for item in steward["focus"])
+        assert campus.DAILY_STEWARD_COMMITMENT_LOOKAHEAD_DAYS == 14
+    finally:
+        campus.DB_PATH = original
+
+
+def test_daily_steward_human_gate_outranks_linked_commitment(tmp_path, monkeypatch):
+    import app as campus
+    original = campus.DB_PATH
+    campus.DB_PATH = tmp_path / "commitment-precedence.db"
+    try:
+        campus.init_db()
+        with campus.db() as conn:
+            today = campus.date.fromisoformat(campus.environment_summary(conn)["local_date"])
+            now = campus.utc_now()
+            project_id = int(conn.execute(
+                "INSERT INTO projects(title,status,created_at,updated_at) VALUES(?,?,?,?)",
+                ("Library Class", "Active", now, now),
+            ).lastrowid)
+            conn.execute(
+                "INSERT INTO tasks(project_id,title,owner_agent_id,status,sequence,brief,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                (project_id, "Assemble class materials", "programs", "Waiting", 1, "", now, now),
+            )
+            conn.execute(
+                "INSERT INTO events(title,event_date,all_day,location,event_type,commitment_level,project_id,notes,status,created_by,created_at,updated_at) VALUES(?,?,1,?,?,?,?,?,?,?,?,?)",
+                ("Library class", (today + campus.timedelta(days=1)).isoformat(), "Library", "Class / Program", "Normal", project_id, "", "Scheduled", "Human", now, now),
+            )
+            conn.execute(
+                "INSERT INTO approvals(project_id,title,summary,status,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                (project_id, "Approve class plan", "Ready", "Pending", now, now),
+            )
+            steward = campus.daily_steward(conn)
+        assert steward["focus"][0]["kind"] == "decision"
+        assert steward["focus"][0]["title"] == "Approve class plan"
+        assert len(steward["focus"]) <= 3
+    finally:
+        campus.DB_PATH = original
+
+
 def test_v08742_calendar_ui_manifest_and_cache_key():
     import json
     index=(ROOT/'static/index.html').read_text(encoding='utf-8')
