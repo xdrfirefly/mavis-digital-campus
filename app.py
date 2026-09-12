@@ -55,7 +55,7 @@ OPENAI_LIST_PRICES_PER_MILLION = {
 }
 TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4.0
 DEFAULT_DAILY_ESTIMATED_COST_LIMIT_USD = 1.00
-SCHEMA_VERSION = "0.9.6"
+SCHEMA_VERSION = "0.9.7"
 MAX_LIBRARY_UPLOAD_BYTES = 100 * 1024 * 1024
 LIBRARY_MATERIAL_TYPES = ("Lesson Plan", "Instructor Notes", "Worksheet", "Slideshow", "Handout", "Supply List", "Photo", "Video", "Audio", "Document", "Spreadsheet", "Archive", "Reference", "Other")
 PROGRAMS_LIBRARY_DECISIONS = ("reuse", "revise", "create_new")
@@ -66,6 +66,11 @@ EVENT_COMMITMENT_LEVELS = ("Light", "Normal", "Major")
 EVENT_STATUSES = ("Scheduled", "Cancelled")
 PHENOLOGY_STATUSES = ("suggested", "observed", "confirmed", "rejected")
 PHENOLOGY_SOURCES = ("human observation", "system suggestion", "imported record")
+IDENTITY_KINDS = ("Person", "Organization")
+CONTRIBUTION_TYPES = ("money_sponsorship", "goods_materials", "professional_service", "equipment_space", "introduction_outreach")
+OFFER_STATUSES = ("Open", "Partially Fulfilled", "Fulfilled", "Cancelled")
+FOLLOW_UP_STATUSES = ("Not Needed", "Pending", "Completed")
+THANK_YOU_STATUSES = ("Not Needed", "Pending", "Completed")
 PHENOLOGY_WATCHLIST_SEEDS = [
     ("Sunchokes","Food & garden plants","Fruit Forest",["emergence","first flower","full bloom","foliage dieback","harvest-ready"]),("Corn","Food & garden plants","Fruit Forest",["emergence","tasseling","silking","ear development","harvest","dry-down"]),("Grapes","Food & garden plants","Fruit Forest",["bud break","leaf-out","bloom","fruit set","veraison","ripe","harvest","leaf fall"]),("Apple","Food & garden plants","Fruit Forest",["bud break","first bloom","full bloom","fruit set","harvest","leaf fall"]),("Garlic","Food & garden plants","Fruit Forest",["emergence","scapes","harvest"]),("Tomatoes","Food & garden plants","Fruit Forest",["first bloom","fruit set","ripening","harvest"]),("Berries","Food & garden plants","Fruit Forest",["first bloom","fruit set","ripe","harvest"]),
     ("Multiflora rose","Wild Appalachian / property","Fruit Forest",["leaf-out","first bloom","full bloom","hips forming","hips ripe","leaf fall"]),("Ironweed","Wild Appalachian / property","Fruit Forest",["emergence","first bloom","full bloom","seed heads","dieback"]),("Goldenrod","Wild Appalachian / property","Fruit Forest",["emergence","first bloom","full bloom","seed heads"]),("Jewelweed","Wild Appalachian / property","Fruit Forest",["emergence","first bloom","seed heads"]),("Milkweed","Wild Appalachian / property","Fruit Forest",["emergence","first bloom","seed pods"]),("Dandelion","Wild Appalachian / property","Fruit Forest",["first bloom","seed heads"]),("Mayapple","Wild Appalachian / property","Fruit Forest",["emergence","first bloom","fruiting"]),("Tulip poplar","Wild Appalachian / property","Fruit Forest",["bud break","first bloom","leaf color","leaf fall"]),("Redbud","Wild Appalachian / property","Fruit Forest",["first bloom","full bloom","leaf-out","leaf fall"]),("Dogwood","Wild Appalachian / property","Fruit Forest",["first bloom","full bloom","leaf color","leaf fall"]),("Maple","Wild Appalachian / property","Fruit Forest",["bud break","leaf color","leaf fall"]),("Black walnut","Wild Appalachian / property","Fruit Forest",["leaf-out","fruit set","leaf color","leaf fall"]),
@@ -146,6 +151,7 @@ def init_db() -> None:
                 contact_info TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
                 is_primary_user INTEGER NOT NULL DEFAULT 0,
+                entity_kind TEXT NOT NULL DEFAULT 'Person',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -194,6 +200,60 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_work_session_audit_session
                 ON work_session_audit(work_session_id,created_at DESC,id DESC);
+
+            -- v0.9.7: local trusted-operator Community Contribution Ledger.
+            CREATE TABLE IF NOT EXISTS contribution_offers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contributor_id INTEGER NOT NULL REFERENCES people(id) ON DELETE RESTRICT,
+                contribution_type TEXT NOT NULL,
+                description TEXT NOT NULL,
+                offered_on TEXT NOT NULL,
+                quantity REAL,
+                unit TEXT,
+                amount_cents INTEGER,
+                currency TEXT,
+                restrictions TEXT NOT NULL DEFAULT '',
+                project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+                event_id INTEGER REFERENCES events(id) ON DELETE SET NULL,
+                status TEXT NOT NULL DEFAULT 'Open',
+                follow_up_status TEXT NOT NULL DEFAULT 'Not Needed',
+                follow_up_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+                notes TEXT NOT NULL DEFAULT '',
+                created_by TEXT NOT NULL DEFAULT 'Human',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_contribution_offers_contributor ON contribution_offers(contributor_id,offered_on DESC,id DESC);
+            CREATE INDEX IF NOT EXISTS idx_contribution_offers_project ON contribution_offers(project_id,status,offered_on DESC);
+
+            CREATE TABLE IF NOT EXISTS community_contributions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contributor_id INTEGER NOT NULL REFERENCES people(id) ON DELETE RESTRICT,
+                offer_id INTEGER REFERENCES contribution_offers(id) ON DELETE SET NULL,
+                contribution_type TEXT NOT NULL,
+                description TEXT NOT NULL,
+                received_on TEXT NOT NULL,
+                quantity REAL,
+                unit TEXT,
+                amount_cents INTEGER,
+                currency TEXT,
+                restrictions TEXT NOT NULL DEFAULT '',
+                project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+                event_id INTEGER REFERENCES events(id) ON DELETE SET NULL,
+                work_session_id INTEGER REFERENCES work_sessions(id) ON DELETE SET NULL,
+                thank_you_status TEXT NOT NULL DEFAULT 'Pending',
+                thanked_at TEXT,
+                follow_up_status TEXT NOT NULL DEFAULT 'Not Needed',
+                follow_up_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+                notes TEXT NOT NULL DEFAULT '',
+                submission_key TEXT NOT NULL UNIQUE,
+                created_by TEXT NOT NULL DEFAULT 'Human',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_community_contributions_contributor ON community_contributions(contributor_id,received_on DESC,id DESC);
+            CREATE INDEX IF NOT EXISTS idx_community_contributions_offer ON community_contributions(offer_id,received_on,id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_community_contributions_work_session ON community_contributions(work_session_id) WHERE work_session_id IS NOT NULL;
 
             -- v0.8.7: Vernadette conversational Grant Desk foundation.
             CREATE TABLE IF NOT EXISTS grants (
@@ -741,6 +801,8 @@ def init_db() -> None:
         people_columns = {row[1] for row in conn.execute("PRAGMA table_info(people)").fetchall()}
         if "is_primary_user" not in people_columns:
             conn.execute("ALTER TABLE people ADD COLUMN is_primary_user INTEGER NOT NULL DEFAULT 0")
+        if "entity_kind" not in people_columns:
+            conn.execute("ALTER TABLE people ADD COLUMN entity_kind TEXT NOT NULL DEFAULT 'Person'")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_people_one_primary_user ON people(is_primary_user) WHERE is_primary_user=1")
         work_columns = {row[1] for row in conn.execute("PRAGMA table_info(work_sessions)").fetchall()}
         if "entry_mode" not in work_columns:
@@ -1236,6 +1298,20 @@ def library_material_search_rows(conn: sqlite3.Connection, limit: int = 1000) ->
         LIMIT ?
         """,
         (max(1, min(int(limit or 1000), 2000)),),
+    )
+
+
+def library_inventory_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Return the minimal trusted inventory used by Rose in Ask Campus."""
+    return rows(
+        conn,
+        """
+        SELECT lm.title,lm.material_type
+        FROM library_materials lm
+        JOIN library_collections lc ON lc.id=lm.collection_id
+        WHERE lm.status='Cataloged' AND lc.status='Active'
+        ORDER BY lm.title COLLATE NOCASE,lm.id
+        """,
     )
 
 
@@ -2063,7 +2139,7 @@ def environment_summary(conn: sqlite3.Connection) -> dict[str, Any]:
 
 def system_health(conn: sqlite3.Connection) -> dict[str, Any]:
     required_tables = {
-        "projects","tasks","approvals","notes","activity_log","ai_calls","ai_control","people","activity_categories","work_sessions","work_session_audit","grants","events",
+        "projects","tasks","approvals","notes","activity_log","ai_calls","ai_control","people","activity_categories","work_sessions","work_session_audit","contribution_offers","community_contributions","grants","events",
         "chief_plans","research_artifacts","programs_artifacts","chief_review_artifacts",
         "workflow_runs","chief_request_submissions","schema_meta","deliverables","revision_requests","revision_plans","project_files","institutional_memory","playbooks","briefing_snapshots",
         "library_collections","library_materials","library_material_index","library_inbox","programs_library_preflights","program_archive_events",
@@ -2083,6 +2159,8 @@ def system_health(conn: sqlite3.Connection) -> dict[str, Any]:
         for row in conn.execute("PRAGMA table_info(ai_calls)").fetchall()
     }
     missing_ai_columns = sorted(required_ai_columns - ai_columns)
+    people_columns = {row[1] for row in conn.execute("PRAGMA table_info(people)").fetchall()}
+    missing_people_columns = sorted({"entity_kind"} - people_columns)
     chief_plan_columns = {
         row[1]
         for row in conn.execute("PRAGMA table_info(chief_plans)").fetchall()
@@ -2117,13 +2195,14 @@ def system_health(conn: sqlite3.Connection) -> dict[str, Any]:
         ).fetchone()[0]
     )
 
-    ok = not missing_tables and not missing_ai_columns and not missing_chief_plan_columns and not missing_memory_columns and not missing_library_material_columns and not missing_library_inbox_columns and bool(schema_row)
+    ok = not missing_tables and not missing_ai_columns and not missing_people_columns and not missing_chief_plan_columns and not missing_memory_columns and not missing_library_material_columns and not missing_library_inbox_columns and bool(schema_row)
     return {
         "ok": ok,
         "schema_version": schema_row["schema_version"] if schema_row else None,
         "target_schema_version": SCHEMA_VERSION,
         "missing_tables": missing_tables,
         "missing_ai_columns": missing_ai_columns,
+        "missing_people_columns": missing_people_columns,
         "missing_chief_plan_columns": missing_chief_plan_columns,
         "missing_memory_columns": missing_memory_columns,
         "missing_library_material_columns": missing_library_material_columns,
@@ -7235,6 +7314,63 @@ class PersonRequest(BaseModel):
     contact_info: str = ""
     notes: str = ""
     is_primary_user: bool = False
+    entity_kind: str = "Person"
+    duplicate_acknowledged: bool = False
+
+
+class IdentityKindRequest(BaseModel):
+    entity_kind: str
+
+
+class ContributionOfferRequest(BaseModel):
+    contributor_id: int
+    contribution_type: str
+    description: str
+    offered_on: str
+    quantity: float | None = None
+    unit: str | None = None
+    amount_cents: int | None = None
+    currency: str | None = None
+    restrictions: str = ""
+    project_id: int | None = None
+    event_id: int | None = None
+    status: str = "Open"
+    follow_up_status: str = "Not Needed"
+    follow_up_task_id: int | None = None
+    notes: str = ""
+
+
+class ContributionReceivedRequest(BaseModel):
+    contributor_id: int
+    offer_id: int | None = None
+    contribution_type: str
+    description: str
+    received_on: str
+    quantity: float | None = None
+    unit: str | None = None
+    amount_cents: int | None = None
+    currency: str | None = None
+    restrictions: str = ""
+    project_id: int | None = None
+    event_id: int | None = None
+    work_session_id: int | None = None
+    thank_you_status: str = "Pending"
+    follow_up_status: str = "Not Needed"
+    follow_up_task_id: int | None = None
+    notes: str = ""
+    submission_key: str
+
+
+class ContributionOfferUpdateRequest(BaseModel):
+    status: str
+    follow_up_status: str = "Not Needed"
+    follow_up_task_id: int | None = None
+
+
+class ContributionReceivedUpdateRequest(BaseModel):
+    thank_you_status: str
+    follow_up_status: str = "Not Needed"
+    follow_up_task_id: int | None = None
 
 
 class PoeCommandRequest(BaseModel):
@@ -7411,6 +7547,22 @@ def _campus_seasonal_context_intent(text: str) -> bool:
     ))
 
 
+def _campus_library_inventory_intent(text: str) -> bool:
+    """Match explicit inventory listing requests, not subject/topic searches."""
+    q = " ".join(str(text or "").casefold().split())
+    if not re.search(r"\b(library|catalog|holdings)\b", q):
+        return False
+    return bool(
+        re.search(r"\b(?:library|catalog) inventory\b", q)
+        or re.search(r"\bwhat (?:materials|holdings|items) (?:are )?(?:currently )?available\b", q)
+        or re.search(
+            r"\b(?:list|show)(?: me)? (?:all |the )?(?:local )?(?:library |catalog(?:ed)? )?"
+            r"(?:materials|holdings|items|titles)(?: and (?:formats|types))?\b",
+            q,
+        )
+    )
+
+
 def _campus_auto_route_detail(text: str, previous_agent: str | None = None) -> tuple[str, str, str]:
     q = text.casefold().strip()
     if any(token in q for token in ("what should i focus", "what should i do", "focus on today", "priorities today", "priority today", "plan my day", "today's priorities", "todays priorities", "needs my attention today")):
@@ -7475,6 +7627,30 @@ def _stella_seasonal_context_answer(conn: sqlite3.Connection) -> dict[str, Any]:
             f"Normalized weather: {weather_summary} ({weather_source})."
         ),
         "seasonal_context": context,
+    }
+
+
+def _rose_library_inventory_answer(conn: sqlite3.Connection) -> dict[str, Any]:
+    """List trusted local holdings without AI, network access, or writes."""
+    try:
+        inventory = library_inventory_rows(conn)
+    except Exception:
+        return {
+            "status": "unavailable",
+            "message": "Local Library inventory retrieval failed. I could not confirm whether Cataloged materials are available.",
+            "library_inventory": None,
+        }
+    if not inventory:
+        return {
+            "status": "ok",
+            "message": "No Cataloged materials in Active collections.",
+            "library_inventory": [],
+        }
+    lines = [f"- {item['title']} — {item['material_type']}" for item in inventory]
+    return {
+        "status": "ok",
+        "message": "Cataloged materials in Active collections:\n" + "\n".join(lines),
+        "library_inventory": inventory,
     }
 
 
@@ -7620,6 +7796,10 @@ async def api_campus_ask(req: CampusAskRequest) -> dict[str, Any]:
     if routed=="stella" and _campus_seasonal_context_intent(text):
         with db() as conn: answer=_stella_seasonal_context_answer(conn)
         return {"status":"ok","mode":"deterministic","handled_by":CAMPUS_AGENT_LABELS['stella'],"agent":"stella","message":answer["message"],"seasonal_context":answer["seasonal_context"],"project_created":False,"additional_ai_calls":0,"route_reason":route_reason,"route_source":route_source}
+
+    if routed=="rose" and _campus_library_inventory_intent(text):
+        with db() as conn: answer=_rose_library_inventory_answer(conn)
+        return {"status":answer["status"],"mode":"deterministic","handled_by":CAMPUS_AGENT_LABELS['rose'],"agent":"rose","message":answer["message"],"library_inventory":answer["library_inventory"],"local_only":True,"web_access":False,"project_created":False,"additional_ai_calls":0,"route_reason":route_reason,"route_source":route_source}
 
     if routed=="stewart" and _campus_weather_intent(text):
         with db() as conn: answer=_campus_weather_answer(conn,text)
@@ -7895,28 +8075,178 @@ async def api_work_report_csv(
     )
 
 
+def _identity_name_key(value: str) -> str:
+    return " ".join(str(value or "").casefold().split())
+
+
+def _possible_identity_duplicates(conn: sqlite3.Connection, name: str) -> list[dict[str, Any]]:
+    key = _identity_name_key(name)
+    return [
+        {"id": int(row["id"]), "display_name": row["display_name"], "entity_kind": row["entity_kind"], "person_type": row["person_type"], "status": row["status"]}
+        for row in conn.execute("SELECT id,display_name,entity_kind,person_type,status FROM people ORDER BY display_name,id").fetchall()
+        if _identity_name_key(row["display_name"]) == key
+    ]
+
+
+def _contribution_text(value: Any, field: str, limit: int, *, required: bool = False) -> str:
+    cleaned = " ".join(str(value or "").split()).strip()[:limit]
+    if required and not cleaned:
+        raise HTTPException(status_code=400, detail=f"Contribution {field} is required.")
+    return cleaned
+
+
+def _contribution_date(value: str, field: str) -> str:
+    try:
+        return date.fromisoformat(str(value or "").strip()).isoformat()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Contribution {field} must use YYYY-MM-DD.") from exc
+
+
+def _contribution_links(conn: sqlite3.Connection, *, project_id: int | None, event_id: int | None, follow_up_task_id: int | None) -> None:
+    if project_id is not None and not conn.execute("SELECT id FROM projects WHERE id=?", (int(project_id),)).fetchone():
+        raise HTTPException(status_code=400, detail="Linked contribution project was not found.")
+    if event_id is not None:
+        event = conn.execute("SELECT id,project_id FROM events WHERE id=?", (int(event_id),)).fetchone()
+        if not event:
+            raise HTTPException(status_code=400, detail="Linked contribution event was not found.")
+        if project_id is not None and event["project_id"] != int(project_id):
+            raise HTTPException(status_code=400, detail="The selected event is not linked to the selected project.")
+    if follow_up_task_id is not None:
+        task = conn.execute("SELECT id,project_id FROM tasks WHERE id=?", (int(follow_up_task_id),)).fetchone()
+        if not task:
+            raise HTTPException(status_code=400, detail="Linked follow-up task was not found.")
+        if project_id is not None and int(task["project_id"]) != int(project_id):
+            raise HTTPException(status_code=400, detail="The follow-up task does not belong to the selected project.")
+
+
+def _contribution_values(req: ContributionOfferRequest | ContributionReceivedRequest, *, date_field: str) -> dict[str, Any]:
+    contribution_type = str(req.contribution_type or "").strip()
+    if contribution_type not in CONTRIBUTION_TYPES:
+        raise HTTPException(status_code=400, detail="Choose a supported contribution type.")
+    quantity = req.quantity
+    if quantity is not None and float(quantity) <= 0:
+        raise HTTPException(status_code=400, detail="Quantity must be greater than zero when provided.")
+    unit = _contribution_text(req.unit, "unit", 80) or None
+    if quantity is not None and not unit:
+        raise HTTPException(status_code=400, detail="A unit is required when quantity is provided.")
+    if quantity is None and unit:
+        raise HTTPException(status_code=400, detail="Do not provide a unit without a quantity.")
+    amount = req.amount_cents
+    if amount is not None and int(amount) <= 0:
+        raise HTTPException(status_code=400, detail="Monetary amount must be greater than zero when provided.")
+    currency = _contribution_text(req.currency, "currency", 3).upper() or None
+    if amount is not None and not currency:
+        raise HTTPException(status_code=400, detail="Currency is required when a monetary amount is provided.")
+    if amount is None and currency:
+        raise HTTPException(status_code=400, detail="Do not provide a currency without a monetary amount.")
+    if amount is not None and contribution_type != "money_sponsorship":
+        raise HTTPException(status_code=400, detail="Only money or sponsorship records may contain a monetary amount. Noncash values are not recorded.")
+    return {
+        "contribution_type": contribution_type,
+        "description": _contribution_text(req.description, "description", 1000, required=True),
+        date_field: _contribution_date(getattr(req, date_field), date_field),
+        "quantity": float(quantity) if quantity is not None else None,
+        "unit": unit,
+        "amount_cents": int(amount) if amount is not None else None,
+        "currency": currency,
+        "restrictions": _contribution_text(req.restrictions, "restrictions", 1000),
+        "notes": _contribution_text(req.notes, "notes", 2000),
+    }
+
+
+def _contribution_ledger(conn: sqlite3.Connection) -> dict[str, Any]:
+    identities = rows(conn, "SELECT id,display_name,entity_kind,person_type,status FROM people ORDER BY display_name COLLATE NOCASE,id")
+    contributions = rows(conn, """
+        SELECT c.*,pe.display_name AS contributor_name,pe.entity_kind AS contributor_kind,
+               p.title AS project_title,e.title AS event_title,t.title AS follow_up_task_title,
+               ws.duration_minutes AS work_session_minutes
+        FROM community_contributions c
+        JOIN people pe ON pe.id=c.contributor_id
+        LEFT JOIN projects p ON p.id=c.project_id LEFT JOIN events e ON e.id=c.event_id
+        LEFT JOIN tasks t ON t.id=c.follow_up_task_id LEFT JOIN work_sessions ws ON ws.id=c.work_session_id
+        ORDER BY c.received_on DESC,c.id DESC
+    """)
+    by_offer: dict[int, list[dict[str, Any]]] = {}
+    for item in contributions:
+        if item.get("offer_id") is not None:
+            by_offer.setdefault(int(item["offer_id"]), []).append(item)
+    offers = rows(conn, """
+        SELECT o.*,pe.display_name AS contributor_name,pe.entity_kind AS contributor_kind,
+               p.title AS project_title,e.title AS event_title,t.title AS follow_up_task_title
+        FROM contribution_offers o JOIN people pe ON pe.id=o.contributor_id
+        LEFT JOIN projects p ON p.id=o.project_id LEFT JOIN events e ON e.id=o.event_id
+        LEFT JOIN tasks t ON t.id=o.follow_up_task_id
+        ORDER BY o.offered_on DESC,o.id DESC
+    """)
+    for offer in offers:
+        fulfilled = by_offer.get(int(offer["id"]), [])
+        offer["fulfillments"] = fulfilled
+        offer["remaining_quantity"] = None
+        offer["remaining_amount_cents"] = None
+        if offer.get("quantity") is not None and all(x.get("quantity") is not None and x.get("unit") == offer.get("unit") for x in fulfilled):
+            offer["remaining_quantity"] = max(0, float(offer["quantity"]) - sum(float(x["quantity"]) for x in fulfilled))
+        if offer.get("amount_cents") is not None and all(x.get("amount_cents") is not None and x.get("currency") == offer.get("currency") for x in fulfilled):
+            offer["remaining_amount_cents"] = max(0, int(offer["amount_cents"]) - sum(int(x["amount_cents"]) for x in fulfilled))
+    return {
+        "access_boundary": "Local trusted operator only; no authentication or authorization is implemented.",
+        "identities": identities,
+        "offers": offers,
+        "contributions": contributions,
+        "projects": rows(conn, "SELECT id,title,status FROM projects ORDER BY title,id"),
+        "events": rows(conn, "SELECT id,title,event_date,project_id,status FROM events ORDER BY event_date DESC,id DESC"),
+        "tasks": rows(conn, "SELECT id,title,project_id,status FROM tasks ORDER BY project_id,sequence,id"),
+        "work_sessions": rows(conn, """SELECT ws.id,ws.person_id,ws.project_id,ws.work_date,ws.started_at,ws.duration_minutes,p.display_name AS person_name,pr.title AS project_title FROM work_sessions ws JOIN people p ON p.id=ws.person_id LEFT JOIN projects pr ON pr.id=ws.project_id WHERE ws.ended_at IS NOT NULL ORDER BY ws.started_at DESC,ws.id DESC LIMIT 250"""),
+        "contribution_types": list(CONTRIBUTION_TYPES),
+    }
+
+
 @app.post("/api/people")
 async def api_person_create(req: PersonRequest) -> dict[str, Any]:
     name = " ".join(str(req.display_name or "").split()).strip()
     if not name:
         raise HTTPException(status_code=400, detail="A person name is required.")
     person_type = " ".join(str(req.person_type or "Volunteer").split()).strip()[:80] or "Volunteer"
+    entity_kind = str(req.entity_kind or "Person").strip().title()
+    if entity_kind not in IDENTITY_KINDS:
+        raise HTTPException(status_code=400, detail="Identity kind must be Person or Organization.")
     status = "Active" if str(req.status or "Active").strip().lower() != "inactive" else "Inactive"
     now = utc_now()
     with db() as conn:
+        duplicates = _possible_identity_duplicates(conn, name)
+        if duplicates and not req.duplicate_acknowledged:
+            return {"status":"duplicate_warning", "message":"A similar identity already exists. Review it before deliberately creating another record.", "possible_duplicates":duplicates}
         if bool(req.is_primary_user):
+            if entity_kind != "Person":
+                raise HTTPException(status_code=400, detail="Only a Person identity can be the primary user.")
             conn.execute("UPDATE people SET is_primary_user=0")
         cur = conn.execute(
             """
-            INSERT INTO people(display_name,person_type,status,contact_info,notes,is_primary_user,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?)
+            INSERT INTO people(display_name,person_type,status,contact_info,notes,is_primary_user,entity_kind,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?)
             """,
-            (name, person_type, status, str(req.contact_info or "")[:1200], str(req.notes or "")[:4000], 1 if req.is_primary_user else 0, now, now),
+            (name, person_type, status, str(req.contact_info or "")[:1200], str(req.notes or "")[:4000], 1 if req.is_primary_user else 0, entity_kind, now, now),
         )
         person_id = int(cur.lastrowid)
         log(conn, "people", "Poe", f"Added {name} to the Campus people ledger as {person_type}.")
     await hub.broadcast()
     return {"person_id": person_id, "status": "created"}
+
+
+@app.post("/api/people/{person_id}/identity-kind")
+async def api_person_identity_kind(person_id: int, req: IdentityKindRequest) -> dict[str, Any]:
+    entity_kind = str(req.entity_kind or "").strip().title()
+    if entity_kind not in IDENTITY_KINDS:
+        raise HTTPException(status_code=400, detail="Identity kind must be Person or Organization.")
+    with db() as conn:
+        person = conn.execute("SELECT * FROM people WHERE id=?", (int(person_id),)).fetchone()
+        if not person:
+            raise HTTPException(status_code=404, detail="Identity not found.")
+        if entity_kind == "Organization" and conn.execute("SELECT 1 FROM work_sessions WHERE person_id=? LIMIT 1", (int(person_id),)).fetchone():
+            raise HTTPException(status_code=409, detail="An identity with work sessions must remain a Person.")
+        if entity_kind == "Organization" and int(person["is_primary_user"] or 0):
+            raise HTTPException(status_code=409, detail="The primary-user identity must remain a Person.")
+        conn.execute("UPDATE people SET entity_kind=?,updated_at=? WHERE id=?", (entity_kind, utc_now(), int(person_id)))
+    return {"person_id":int(person_id), "entity_kind":entity_kind, "status":"updated"}
 
 
 @app.post("/api/people/{person_id}/primary")
@@ -7925,11 +8255,118 @@ async def api_person_set_primary(person_id: int) -> dict[str, Any]:
         person = conn.execute("SELECT * FROM people WHERE id=?", (int(person_id),)).fetchone()
         if not person:
             raise HTTPException(status_code=404, detail="Person not found.")
+        if str(person["entity_kind"] or "Person") != "Person":
+            raise HTTPException(status_code=409, detail="Only a Person identity can be the primary user.")
         conn.execute("UPDATE people SET is_primary_user=0,updated_at=? WHERE is_primary_user=1", (utc_now(),))
         conn.execute("UPDATE people SET is_primary_user=1,updated_at=? WHERE id=?", (utc_now(), int(person_id)))
         log(conn, "people", "Poe", f"Set {person['display_name']} as the primary ‘me’ record for conversational timekeeping.")
     await hub.broadcast()
     return {"person_id": int(person_id), "status": "primary"}
+
+
+@app.get("/api/community-contributions")
+async def api_community_contributions() -> dict[str, Any]:
+    with db() as conn:
+        return _contribution_ledger(conn)
+
+
+@app.post("/api/community-contributions/offers")
+async def api_contribution_offer_create(req: ContributionOfferRequest) -> dict[str, Any]:
+    values = _contribution_values(req, date_field="offered_on")
+    if req.status not in OFFER_STATUSES or req.follow_up_status not in FOLLOW_UP_STATUSES:
+        raise HTTPException(status_code=400, detail="Choose supported offer and follow-up statuses.")
+    with db() as conn:
+        if not conn.execute("SELECT id FROM people WHERE id=?", (int(req.contributor_id),)).fetchone():
+            raise HTTPException(status_code=400, detail="Contributor identity was not found.")
+        _contribution_links(conn, project_id=req.project_id, event_id=req.event_id, follow_up_task_id=req.follow_up_task_id)
+        now = utc_now()
+        cur = conn.execute("""
+            INSERT INTO contribution_offers(contributor_id,contribution_type,description,offered_on,quantity,unit,amount_cents,currency,restrictions,project_id,event_id,status,follow_up_status,follow_up_task_id,notes,created_by,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Human',?,?)
+        """, (int(req.contributor_id),values["contribution_type"],values["description"],values["offered_on"],values["quantity"],values["unit"],values["amount_cents"],values["currency"],values["restrictions"],req.project_id,req.event_id,req.status,req.follow_up_status,req.follow_up_task_id,values["notes"],now,now))
+        offer_id = int(cur.lastrowid)
+        return {"status":"created", "offer_id":offer_id}
+
+
+@app.post("/api/community-contributions/offers/{offer_id}")
+async def api_contribution_offer_update(offer_id: int, req: ContributionOfferUpdateRequest) -> dict[str, Any]:
+    if req.status not in OFFER_STATUSES or req.follow_up_status not in FOLLOW_UP_STATUSES:
+        raise HTTPException(status_code=400, detail="Choose supported offer and follow-up statuses.")
+    with db() as conn:
+        offer = conn.execute("SELECT * FROM contribution_offers WHERE id=?", (int(offer_id),)).fetchone()
+        if not offer:
+            raise HTTPException(status_code=404, detail="Contribution offer was not found.")
+        _contribution_links(conn, project_id=offer["project_id"], event_id=offer["event_id"], follow_up_task_id=req.follow_up_task_id)
+        conn.execute("UPDATE contribution_offers SET status=?,follow_up_status=?,follow_up_task_id=?,updated_at=? WHERE id=?", (req.status,req.follow_up_status,req.follow_up_task_id,utc_now(),int(offer_id)))
+    return {"status":"updated", "offer_id":int(offer_id)}
+
+
+@app.post("/api/community-contributions/received")
+async def api_contribution_received_create(req: ContributionReceivedRequest) -> dict[str, Any]:
+    values = _contribution_values(req, date_field="received_on")
+    if req.thank_you_status not in THANK_YOU_STATUSES or req.follow_up_status not in FOLLOW_UP_STATUSES:
+        raise HTTPException(status_code=400, detail="Choose supported thank-you and follow-up statuses.")
+    submission_key = _contribution_text(req.submission_key, "submission key", 120, required=True)
+    with db() as conn:
+        existing = conn.execute("SELECT id FROM community_contributions WHERE submission_key=?", (submission_key,)).fetchone()
+        if existing:
+            return {"status":"duplicate", "contribution_id":int(existing["id"]), "message":"This received contribution was already recorded."}
+        identity = conn.execute("SELECT id,entity_kind FROM people WHERE id=?", (int(req.contributor_id),)).fetchone()
+        if not identity:
+            raise HTTPException(status_code=400, detail="Contributor identity was not found.")
+        _contribution_links(conn, project_id=req.project_id, event_id=req.event_id, follow_up_task_id=req.follow_up_task_id)
+        if req.offer_id is not None:
+            offer = conn.execute("SELECT * FROM contribution_offers WHERE id=?", (int(req.offer_id),)).fetchone()
+            if not offer:
+                raise HTTPException(status_code=400, detail="Contribution offer was not found.")
+            if int(offer["contributor_id"]) != int(req.contributor_id) or offer["contribution_type"] != values["contribution_type"]:
+                raise HTTPException(status_code=400, detail="Fulfillment contributor and type must match the original offer.")
+            for field in ("project_id", "event_id"):
+                if offer[field] is not None and getattr(req, field) is not None and int(offer[field]) != int(getattr(req, field)):
+                    raise HTTPException(status_code=400, detail=f"Fulfillment {field.replace('_id','')} conflicts with the original offer.")
+            if offer["amount_cents"] is not None and values["amount_cents"] is not None and offer["currency"] != values["currency"]:
+                raise HTTPException(status_code=400, detail="Fulfillment currency must match the original offer; currencies are not converted.")
+        if req.work_session_id is not None:
+            if values["contribution_type"] != "professional_service":
+                raise HTTPException(status_code=400, detail="Only professional-service contributions may link a work session.")
+            if values["quantity"] is not None and str(values["unit"] or "").casefold() in {"hour", "hours", "hr", "hrs"}:
+                raise HTTPException(status_code=400, detail="Do not duplicate linked work-session hours in contribution quantity.")
+            session = conn.execute("SELECT * FROM work_sessions WHERE id=? AND ended_at IS NOT NULL", (int(req.work_session_id),)).fetchone()
+            if not session:
+                raise HTTPException(status_code=400, detail="Linked work session must exist and be completed.")
+            if int(session["person_id"]) != int(req.contributor_id):
+                raise HTTPException(status_code=400, detail="Linked work session belongs to a different contributor.")
+            if req.project_id is not None and session["project_id"] is not None and int(session["project_id"]) != int(req.project_id):
+                raise HTTPException(status_code=400, detail="Linked work session belongs to a different project.")
+        now = utc_now()
+        try:
+            cur = conn.execute("""
+                INSERT INTO community_contributions(contributor_id,offer_id,contribution_type,description,received_on,quantity,unit,amount_cents,currency,restrictions,project_id,event_id,work_session_id,thank_you_status,thanked_at,follow_up_status,follow_up_task_id,notes,submission_key,created_by,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Human',?,?)
+            """, (int(req.contributor_id),req.offer_id,values["contribution_type"],values["description"],values["received_on"],values["quantity"],values["unit"],values["amount_cents"],values["currency"],values["restrictions"],req.project_id,req.event_id,req.work_session_id,req.thank_you_status,now if req.thank_you_status=="Completed" else None,req.follow_up_status,req.follow_up_task_id,values["notes"],submission_key,now,now))
+        except sqlite3.IntegrityError as exc:
+            if req.work_session_id is not None and conn.execute("SELECT id FROM community_contributions WHERE work_session_id=?", (int(req.work_session_id),)).fetchone():
+                raise HTTPException(status_code=409, detail="That work session is already linked to a contribution.") from exc
+            raise
+        return {"status":"created", "contribution_id":int(cur.lastrowid)}
+
+
+@app.post("/api/community-contributions/received/{contribution_id}")
+async def api_contribution_received_update(contribution_id: int, req: ContributionReceivedUpdateRequest) -> dict[str, Any]:
+    if req.thank_you_status not in THANK_YOU_STATUSES or req.follow_up_status not in FOLLOW_UP_STATUSES:
+        raise HTTPException(status_code=400, detail="Choose supported thank-you and follow-up statuses.")
+    with db() as conn:
+        item = conn.execute("SELECT * FROM community_contributions WHERE id=?", (int(contribution_id),)).fetchone()
+        if not item:
+            raise HTTPException(status_code=404, detail="Received contribution was not found.")
+        _contribution_links(conn, project_id=item["project_id"], event_id=item["event_id"], follow_up_task_id=req.follow_up_task_id)
+        thanked_at = item["thanked_at"]
+        if req.thank_you_status == "Completed" and not thanked_at:
+            thanked_at = utc_now()
+        elif req.thank_you_status != "Completed":
+            thanked_at = None
+        conn.execute("UPDATE community_contributions SET thank_you_status=?,thanked_at=?,follow_up_status=?,follow_up_task_id=?,updated_at=? WHERE id=?", (req.thank_you_status,thanked_at,req.follow_up_status,req.follow_up_task_id,utc_now(),int(contribution_id)))
+    return {"status":"updated", "contribution_id":int(contribution_id)}
 
 
 @app.post("/api/poe/command")
@@ -8052,6 +8489,8 @@ async def api_work_clock_in(req: WorkClockInRequest) -> dict[str, Any]:
         person = conn.execute("SELECT * FROM people WHERE id=?", (int(req.person_id),)).fetchone()
         if not person:
             raise HTTPException(status_code=404, detail="Person not found.")
+        if str(person["entity_kind"] or "Person") != "Person":
+            raise HTTPException(status_code=409, detail="Organizations cannot receive work sessions.")
         open_row = conn.execute("SELECT id FROM work_sessions WHERE person_id=? AND ended_at IS NULL", (int(req.person_id),)).fetchone()
         if open_row:
             raise HTTPException(status_code=409, detail=f"{person['display_name']} is already clocked in.")

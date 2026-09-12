@@ -10,8 +10,8 @@ import app as campus
 
 LIVE_VERSION = campus.SCHEMA_VERSION
 LIVE_BUILD = f"v{LIVE_VERSION}"
-LIVE_SHELL_LABEL = f"{LIVE_BUILD} · Seasonal Context Bridge"
-LIVE_CACHE_KEY = "096"
+LIVE_SHELL_LABEL = f"{LIVE_BUILD} · Community Contribution Ledger"
+LIVE_CACHE_KEY = "097"
 
 
 def test_seed_state_and_executive_summary():
@@ -7438,6 +7438,98 @@ def test_v08742_campus_ask_daily_and_weather_are_local(tmp_path, monkeypatch):
     assert weather["open_panel"] == "environment"
 
 
+def test_v097_rose_library_inventory_confirms_empty_without_ai_or_writes(tmp_path, monkeypatch):
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "rose-library-empty.db")
+    campus.init_db()
+
+    async def unexpected_ai(*_args, **_kwargs):
+        raise AssertionError("Recognized Library inventory requests must not call AI.")
+
+    monkeypatch.setattr(campus, "_campus_ai_advice", unexpected_ai)
+    tracked = ("library_collections", "library_materials", "library_inbox", "ai_calls", "activity_log", "contribution_offers", "community_contributions")
+    with campus.db() as conn:
+        before = {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in tracked}
+
+    prompt = "Search only the local Library. What materials are currently available? Show their titles and formats. If it is empty, say so. Do not search the web or create anything."
+    result = asyncio.run(campus.api_campus_ask(campus.CampusAskRequest(text=prompt, agent="auto")))
+
+    assert result["agent"] == "rose"
+    assert result["mode"] == "deterministic"
+    assert result["message"] == "No Cataloged materials in Active collections."
+    assert result["library_inventory"] == []
+    assert result["local_only"] is True and result["web_access"] is False
+    assert result["additional_ai_calls"] == 0 and result["project_created"] is False
+    with campus.db() as conn:
+        after = {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in tracked}
+    assert after == before
+
+
+def test_v097_rose_library_inventory_lists_exact_trusted_titles_and_types(tmp_path, monkeypatch):
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "rose-library-list.db")
+    campus.init_db()
+    now = campus.utc_now()
+    with campus.db() as conn:
+        active_id = conn.execute(
+            "INSERT INTO library_collections(title,collection_type,status,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+            ("Current Collection", "Class", "Active", "Human", now, now),
+        ).lastrowid
+        inactive_id = conn.execute(
+            "INSERT INTO library_collections(title,collection_type,status,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+            ("Inactive Collection", "Class", "Archived", "Human", now, now),
+        ).lastrowid
+        for collection_id, title, material_type, status in (
+            (active_id, "Apple Notes", "Instructor Notes", "Cataloged"),
+            (active_id, "Barn Plan v2", "Presentation", "Cataloged"),
+            (active_id, "Unreviewed Draft", "Document", "Incoming"),
+            (inactive_id, "Old Handout", "Handout", "Cataloged"),
+        ):
+            conn.execute(
+                "INSERT INTO library_materials(collection_id,title,material_type,status,source_kind,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                (collection_id, title, material_type, status, "manual", "Human", now, now),
+            )
+
+    async def unexpected_ai(*_args, **_kwargs):
+        raise AssertionError("Inventory listing must not call AI.")
+
+    monkeypatch.setattr(campus, "_campus_ai_advice", unexpected_ai)
+    result = asyncio.run(campus.api_campus_ask(campus.CampusAskRequest(text="Show the local Library materials and formats.", agent="rose")))
+    assert result["library_inventory"] == [
+        {"title": "Apple Notes", "material_type": "Instructor Notes"},
+        {"title": "Barn Plan v2", "material_type": "Presentation"},
+    ]
+    assert "Apple Notes — Instructor Notes" in result["message"]
+    assert "Barn Plan v2 — Presentation" in result["message"]
+    assert "Unreviewed Draft" not in result["message"] and "Old Handout" not in result["message"]
+    assert set(result["library_inventory"][0]) == {"title", "material_type"}
+
+
+def test_v097_rose_library_inventory_reports_retrieval_failure_not_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "rose-library-unavailable.db")
+    campus.init_db()
+
+    def unavailable(_conn):
+        raise campus.sqlite3.OperationalError("simulated read failure")
+
+    async def unexpected_ai(*_args, **_kwargs):
+        raise AssertionError("Failed inventory retrieval must not fall back to AI.")
+
+    monkeypatch.setattr(campus, "library_inventory_rows", unavailable)
+    monkeypatch.setattr(campus, "_campus_ai_advice", unexpected_ai)
+    result = asyncio.run(campus.api_campus_ask(campus.CampusAskRequest(text="What materials are available in the Library?", agent="auto")))
+    assert result["status"] == "unavailable"
+    assert result["library_inventory"] is None
+    assert "retrieval failed" in result["message"].lower()
+    assert "no cataloged materials" not in result["message"].lower()
+    assert result["additional_ai_calls"] == 0 and result["web_access"] is False
+
+
+def test_v097_rose_library_inventory_intent_does_not_capture_topic_search():
+    assert campus._campus_library_inventory_intent("Search the local Library for tincture safety guidance.") is False
+    assert campus._campus_library_inventory_intent("Research the history of barn construction in the Library.") is False
+    assert campus._campus_auto_route("Search the local Library for tincture safety guidance.") == "rose"
+    assert campus._campus_library_inventory_intent("What materials are currently available in the local Library?") is True
+
+
 def test_v08742_campus_ask_explicit_project_requires_confirmation(tmp_path, monkeypatch):
     monkeypatch.setattr(campus, "DB_PATH", tmp_path / "ask-project.db")
     campus.init_db()
@@ -7694,8 +7786,8 @@ def test_v096_seasonal_context_transparency_ui_and_release_contract():
     js = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
     css = (ROOT / "static/css/app.css").read_text(encoding="utf-8")
     manifest = json.loads((ROOT / "static/assets/asset-manifest.json").read_text(encoding="utf-8"))
-    assert LIVE_VERSION == "0.9.6"
-    assert LIVE_CACHE_KEY == "096"
+    assert LIVE_VERSION == "0.9.7"
+    assert LIVE_CACHE_KEY == "097"
     assert "Rose’s Seasonal Briefing" in js
     assert "getJson('/api/environment/seasonal-context')" in js
     assert "Observed Now" in js and "established observations" in js
@@ -7715,3 +7807,146 @@ def test_v096_seasonal_context_transparency_ui_and_release_contract():
     assert manifest["build"] == LIVE_BUILD
     assert manifest["version"] == LIVE_VERSION
     assert manifest["ai_runtime"]["stabilization_recovery"]["schema_version"] == LIVE_VERSION
+
+
+def test_v097_contribution_offer_fulfillments_direct_and_duplicate_guard(tmp_path, monkeypatch):
+    import app as campus
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "contributions.db")
+    campus.init_db()
+    sam = asyncio.run(campus.api_person_create(campus.PersonRequest(display_name="Sam")))
+    with campus.db() as conn:
+        now = campus.utc_now()
+        project_id = int(conn.execute("INSERT INTO projects(title,status,created_at,updated_at) VALUES(?,?,?,?)", ("Barn Repair", "Active", now, now)).lastrowid)
+        event_id = int(conn.execute("INSERT INTO events(title,event_date,all_day,location,event_type,commitment_level,project_id,notes,status,created_by,created_at,updated_at) VALUES(?,?,1,?,?,?,?,?,?,?,?,?)", ("Barn workday", "2026-09-20", "Barn", "Institute", "Normal", project_id, "", "Scheduled", "Human", now, now)).lastrowid)
+    offer = asyncio.run(campus.api_contribution_offer_create(campus.ContributionOfferRequest(
+        contributor_id=sam["person_id"], contribution_type="goods_materials", description="Lumber for the barn",
+        offered_on="2026-09-12", quantity=10, unit="boards", project_id=project_id, event_id=event_id,
+    )))
+    request = campus.ContributionReceivedRequest(
+        contributor_id=sam["person_id"], offer_id=offer["offer_id"], contribution_type="goods_materials",
+        description="Delivered six boards", received_on="2026-09-15", quantity=6, unit="boards",
+        project_id=project_id, event_id=event_id, submission_key="sam-six-boards",
+    )
+    received = asyncio.run(campus.api_contribution_received_create(request))
+    duplicate = asyncio.run(campus.api_contribution_received_create(request))
+    asyncio.run(campus.api_contribution_received_create(campus.ContributionReceivedRequest(
+        contributor_id=sam["person_id"], offer_id=offer["offer_id"], contribution_type="goods_materials",
+        description="Delivered two more boards", received_on="2026-09-16", quantity=2, unit="boards",
+        project_id=project_id, event_id=event_id, submission_key="sam-two-more-boards",
+    )))
+    direct = asyncio.run(campus.api_contribution_received_create(campus.ContributionReceivedRequest(
+        contributor_id=sam["person_id"], contribution_type="goods_materials", description="Two bags of mulch",
+        received_on="2026-09-16", quantity=2, unit="bags", submission_key="direct-mulch",
+    )))
+    ledger = asyncio.run(campus.api_community_contributions())
+    saved_offer = next(x for x in ledger["offers"] if x["id"] == offer["offer_id"])
+    assert received["status"] == "created" and direct["status"] == "created"
+    assert duplicate == {"status":"duplicate", "contribution_id":received["contribution_id"], "message":"This received contribution was already recorded."}
+    assert saved_offer["remaining_quantity"] == 2
+    assert len(saved_offer["fulfillments"]) == 2
+    asyncio.run(campus.api_contribution_offer_update(offer["offer_id"], campus.ContributionOfferUpdateRequest(status="Cancelled")))
+    ledger = asyncio.run(campus.api_community_contributions())
+    assert next(x for x in ledger["offers"] if x["id"] == offer["offer_id"])["status"] == "Cancelled"
+    assert len(ledger["contributions"]) == 3
+    with campus.db() as conn:
+        conn.execute("UPDATE events SET project_id=NULL WHERE id=?", (event_id,))
+        saved = conn.execute("SELECT project_id,event_id FROM community_contributions WHERE id=?", (received["contribution_id"],)).fetchone()
+    assert saved["project_id"] == project_id and saved["event_id"] == event_id
+
+
+def test_v097_identity_links_work_sessions_and_reset_preservation(tmp_path, monkeypatch):
+    import app as campus
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "identity-contributions.db")
+    campus.init_db()
+    sam = asyncio.run(campus.api_person_create(campus.PersonRequest(display_name="Sam")))
+    warning = asyncio.run(campus.api_person_create(campus.PersonRequest(display_name=" sam ", entity_kind="Organization")))
+    assert warning["status"] == "duplicate_warning" and warning["possible_duplicates"][0]["id"] == sam["person_id"]
+    org = asyncio.run(campus.api_person_create(campus.PersonRequest(display_name="Mavis Hardware", entity_kind="Organization", person_type="Sponsor")))
+    with campus.db() as conn:
+        now = campus.utc_now()
+        project_id = int(conn.execute("INSERT INTO projects(title,status,created_at,updated_at) VALUES(?,?,?,?)", ("Library Class", "Active", now, now)).lastrowid)
+        other_project = int(conn.execute("INSERT INTO projects(title,status,created_at,updated_at) VALUES(?,?,?,?)", ("Other", "Active", now, now)).lastrowid)
+        event_id = int(conn.execute("INSERT INTO events(title,event_date,all_day,location,event_type,commitment_level,project_id,notes,status,created_by,created_at,updated_at) VALUES(?,?,1,?,?,?,?,?,?,?,?,?)", ("Class", "2026-09-21", "Library", "Class / Program", "Normal", project_id, "", "Scheduled", "Human", now, now)).lastrowid)
+        task_id = int(conn.execute("INSERT INTO tasks(project_id,title,owner_agent_id,status,sequence,brief,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)", (project_id,"Thank Sam","operations","Waiting",1,"",now,now)).lastrowid)
+        category_id = int(conn.execute("SELECT id FROM activity_categories LIMIT 1").fetchone()[0])
+    try:
+        asyncio.run(campus.api_work_clock_in(campus.WorkClockInRequest(person_id=org["person_id"], activity_category_id=category_id)))
+        assert False, "Organization clock-in should fail"
+    except campus.HTTPException as exc:
+        assert exc.status_code == 409
+    session = asyncio.run(campus.api_work_clock_in(campus.WorkClockInRequest(person_id=sam["person_id"], project_id=project_id, activity_category_id=category_id)))
+    asyncio.run(campus.api_work_clock_out(session["session_id"], campus.WorkClockOutRequest()))
+    try:
+        asyncio.run(campus.api_person_identity_kind(sam["person_id"], campus.IdentityKindRequest(entity_kind="Organization")))
+        assert False, "Identity with work should remain Person"
+    except campus.HTTPException as exc:
+        assert exc.status_code == 409
+    contribution = asyncio.run(campus.api_contribution_received_create(campus.ContributionReceivedRequest(
+        contributor_id=sam["person_id"], contribution_type="professional_service", description="Class facilitation",
+        received_on="2026-09-21", project_id=project_id, event_id=event_id, work_session_id=session["session_id"],
+        follow_up_status="Pending", follow_up_task_id=task_id, submission_key="facilitation-session",
+    )))
+    try:
+        asyncio.run(campus.api_contribution_received_create(campus.ContributionReceivedRequest(
+            contributor_id=sam["person_id"], contribution_type="professional_service", description="Duplicate facilitation",
+            received_on="2026-09-21", work_session_id=session["session_id"], submission_key="different-key",
+        )))
+        assert False, "One work session must not be counted twice"
+    except campus.HTTPException as exc:
+        assert exc.status_code == 409
+    try:
+        asyncio.run(campus.api_contribution_offer_create(campus.ContributionOfferRequest(
+            contributor_id=sam["person_id"], contribution_type="goods_materials", description="Conflict",
+            offered_on="2026-09-12", project_id=other_project, event_id=event_id,
+        )))
+        assert False, "Conflicting project/event should fail"
+    except campus.HTTPException as exc:
+        assert exc.status_code == 400
+    campus.reset_runtime()
+    with campus.db() as conn:
+        saved = conn.execute("SELECT project_id,event_id,work_session_id FROM community_contributions WHERE id=?", (contribution["contribution_id"],)).fetchone()
+    assert saved is not None and saved["project_id"] is None and saved["event_id"] == event_id and saved["work_session_id"] == session["session_id"]
+
+
+def test_v097_contributions_are_on_demand_local_only_and_ui_contract(tmp_path, monkeypatch):
+    import app as campus
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "visibility.db")
+    campus.init_db()
+    identity = asyncio.run(campus.api_person_create(campus.PersonRequest(display_name="Private Donor")))
+    asyncio.run(campus.api_contribution_received_create(campus.ContributionReceivedRequest(
+        contributor_id=identity["person_id"], contribution_type="money_sponsorship", description="Restricted class gift",
+        received_on="2026-09-12", amount_cents=2500, currency="USD", restrictions="Class supplies only",
+        submission_key="private-gift",
+    )))
+    state = campus.current_state()
+    assert "community_contributions" not in state and "contribution_offers" not in state
+    assert "Restricted class gift" not in str(state) and "Class supplies only" not in str(state)
+    with campus.db() as conn:
+        prompt = campus._campus_advisor_prompt("stella", "What matters?", conn)
+        activity = str(campus.rows(conn, "SELECT * FROM activity_log"))
+    assert "Restricted class gift" not in prompt and "Class supplies only" not in prompt
+    assert "Restricted class gift" not in activity and "Class supplies only" not in activity
+    index = (ROOT / "static/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
+    css = (ROOT / "static/css/app.css").read_text(encoding="utf-8")
+    assert LIVE_SHELL_LABEL in index and f"app.js?v={LIVE_CACHE_KEY}" in index
+    assert "/api/community-contributions" in js and "Local trusted operator only" in js
+    assert "data-contribution-offer-form" in js and "data-contribution-received-form" in js
+    assert ".contribution-card" in css
+
+
+def test_v097_additive_identity_migration_preserves_legacy_people(tmp_path, monkeypatch):
+    import sqlite3
+    import app as campus
+    path = tmp_path / "legacy-people.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute("""CREATE TABLE people(id INTEGER PRIMARY KEY AUTOINCREMENT,display_name TEXT NOT NULL,person_type TEXT NOT NULL DEFAULT 'Volunteer',status TEXT NOT NULL DEFAULT 'Active',contact_info TEXT NOT NULL DEFAULT '',notes TEXT NOT NULL DEFAULT '',is_primary_user INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)""")
+        conn.execute("INSERT INTO people(id,display_name,person_type,status,contact_info,notes,is_primary_user,created_at,updated_at) VALUES(7,'Legacy Helper','Volunteer','Active','kept contact','kept note',0,'2026-01-01','2026-01-01')")
+    monkeypatch.setattr(campus, "DB_PATH", path)
+    campus.init_db()
+    with campus.db() as conn:
+        person = conn.execute("SELECT * FROM people WHERE id=7").fetchone()
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert person["entity_kind"] == "Person"
+    assert person["contact_info"] == "kept contact" and person["notes"] == "kept note"
+    assert {"contribution_offers", "community_contributions"}.issubset(tables)

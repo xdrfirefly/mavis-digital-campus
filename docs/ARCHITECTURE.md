@@ -27,6 +27,7 @@ Browser state includes an Ask the Campus history stored for the browser session.
 - projects, tasks, approvals, and Chief workflows: `/api/chief/plan`, `/api/projects/*`, `/api/tasks/*`, `/api/approvals/*`;
 - Library intake, catalog, index, collections, playbooks, memory, and repository files: `/api/library/*`, `/api/playbooks*`, `/api/memory*`, `/api/repository/*`;
 - environment, weather, seasons, human-reviewed phenology, events, and Stella Daily Steward: `/api/environment/*`, `/api/events*`, `/api/stella/daily`;
+- local trusted-operator community contributions: on-demand `/api/community-contributions*` routes, intentionally excluded from `/api/state`, WebSocket payloads, exports, and AI context;
 - grants and AI controls: `/api/grants*`, `/api/vernadette/command`, `/api/ai/*`.
 
 The application keeps a module-global WebSocket hub and one module-global `workflow_task`; approved plans and demo workflows are launched with `asyncio.create_task`.
@@ -58,10 +59,16 @@ No `mavis.db` was present in the audited checkout; `library/` and `repository/` 
 2. Library files move from inbox to human cataloging before they become trusted Library materials. Local text extraction feeds the SQLite search index; the Librarian searches this trusted local index.
 3. Weather refresh optionally queries Weather Underground for the configured station and queries Open-Meteo for forecast data. Results are stored in SQLite and read by the environment UI and Daily Steward.
 4. Phenology observations are stored locally with source and review status. Rose can compare trusted observed/confirmed records by normalized subject and stage across years; suggestions remain excluded until human review and phenology does not feed planning.
-5. Ask the Campus routes some requests to deterministic local handlers; configured AI role calls are recorded in `ai_calls` and guarded by the AI controls.
+5. Ask the Campus routes some requests to deterministic local handlers; configured AI role calls are recorded in `ai_calls` and guarded by the AI controls. A narrowly matched Rose inventory request reads only titles and recorded material types for `Cataloged` materials in `Active` Library collections. A successful zero-row query is reported as no Cataloged materials in Active collections, while retrieval errors are reported separately; this path makes no AI/network calls or writes and does not receive contribution data.
 6. Daily Steward reads scheduled events explicitly linked to active projects within a 14-day look-ahead. It adds a bounded boost to that project's already-recorded next task (18 points at 0–3 days, 12 at 4–7, and 6 at 8–14), labels the task only as supporting the named dated commitment, and performs no writes. Unlinked, inactive, cancelled, completed, past, and more-distant events do not influence task priority; approvals, blockers, calendar workload limits, weather adjustments, and the three-item maximum remain authoritative.
 
-The next planned operating-cycle layer is a durable community-contribution ledger covering received contributions, outstanding offers, thank-yous, and follow-ups. Personal/nonprofit visibility and permissions require a separate design before shared access is expanded.
+The next contribution layer is intentionally deferred: natural-language capture, exports/dashboards, broader reporting, and any automated communications. Personal/nonprofit visibility and permissions require a separate design before shared access is expanded.
+
+## Local access boundary
+
+The application has no authentication or authorization layer. Supported launchers bind Uvicorn to `127.0.0.1`, so the current deployment boundary is one trusted operator on the local machine. Community Contribution Ledger endpoints are on-demand but are not private from other software or users able to access that local server. Do not expose MDC on a LAN, public host, shared reverse proxy, or volunteer-facing device without first adding authenticated users, endpoint authorization, and field-level visibility rules.
+
+Community contribution records use the existing identity, project, event, task, and work-session records. Offers and received contributions are separate; a received contribution may fulfill an offer or stand alone. Work sessions remain authoritative for time. Ledger mutations do not broadcast details or add them to general activity logs, and current exports and AI prompts do not read the ledger.
 
 ## Configuration
 

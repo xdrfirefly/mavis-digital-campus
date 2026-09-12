@@ -1,6 +1,6 @@
-// v0.9.6 — Seasonal Context Bridge.
-import { worldConfig } from './world-config.js?v=096';
-import { assets, forestPlacements, worldProps } from './world-assets.js?v=096';
+// v0.9.7 — Community Contribution Ledger.
+import { worldConfig } from './world-config.js?v=097';
+import { assets, forestPlacements, worldProps } from './world-assets.js?v=097';
 import { createCamera } from './camera.js';
 
 const els = {
@@ -69,6 +69,8 @@ let librarianQuery = '';
 let librarianResult = null;
 let workReport = null;
 let workReportLoading = false;
+let contributionLedger = null;
+let contributionLedgerLoading = false;
 let poeCommandResult = null;
 let poeCommandSubmitting = false;
 let stellaDailyResult = null;
@@ -834,23 +836,50 @@ function drawerCalendar(){
   return `${overview}${form}${section('Today',today,'Nothing scheduled today.')}${section('Tomorrow',tomorrow,'Nothing scheduled tomorrow.')}${section('Later this week',week,'No additional events in the next seven days.')}${future.length?section('Later',future.slice(0,30),''):''}${cancelled.length?section('Cancelled / history',cancelled,''):''}`;
 }
 
+function contributionTypeLabel(value){return ({money_sponsorship:'Money / sponsorship',goods_materials:'Goods / materials',professional_service:'Professional service',equipment_space:'Equipment / space',introduction_outreach:'Introduction / outreach'})[value]||value;}
+function contributionAmount(item){
+  const parts=[];
+  if(item.quantity!=null)parts.push(`${Number(item.quantity)} ${esc(item.unit||'')}`);
+  if(item.amount_cents!=null)parts.push(`${esc(item.currency||'')} ${(Number(item.amount_cents)/100).toFixed(2)}`);
+  return parts.join(' · ')||'Quantity / amount unknown';
+}
+function contributionLedgerPanel(){
+  if(contributionLedgerLoading&&!contributionLedger)return `<section class="drawer-section"><h4>Community Contributions</h4><p>Loading the local ledger…</p></section>`;
+  if(!contributionLedger)return `<section class="drawer-section"><div class="section-row"><h4>Community Contributions</h4><button type="button" data-load-contributions>Load ledger</button></div><p>Manual internal records for offers and help received.</p></section>`;
+  const x=contributionLedger, ids=x.identities.filter(i=>i.status==='Active'), projects=x.projects||[], events=x.events||[], tasks=x.tasks||[];
+  const identityOptions=ids.map(i=>`<option value="${i.id}">${esc(i.display_name)} · ${esc(i.entity_kind)}</option>`).join('');
+  const projectOptions=projects.map(p=>`<option value="${p.id}">${esc(p.title)}</option>`).join('');
+  const eventOptions=events.map(e=>`<option value="${e.id}" data-project-id="${e.project_id||''}">${esc(e.event_date)} · ${esc(e.title)}</option>`).join('');
+  const taskOptions=tasks.map(t=>`<option value="${t.id}" data-project-id="${t.project_id}">${esc(t.title)}</option>`).join('');
+  const sessionOptions=(x.work_sessions||[]).map(s=>`<option value="${s.id}" data-person-id="${s.person_id}" data-project-id="${s.project_id||''}">${esc(s.person_name)} · ${Number(s.duration_minutes||0)} min${s.project_title?` · ${esc(s.project_title)}`:''}</option>`).join('');
+  const offerOptions=(x.offers||[]).filter(o=>o.status!=='Cancelled'&&o.status!=='Fulfilled').map(o=>`<option value="${o.id}" data-person-id="${o.contributor_id}" data-type="${o.contribution_type}" data-project-id="${o.project_id||''}" data-event-id="${o.event_id||''}">${esc(o.contributor_name)} · ${esc(o.description)}</option>`).join('');
+  const types=(x.contribution_types||[]).map(t=>`<option value="${t}">${esc(contributionTypeLabel(t))}</option>`).join('');
+  const linkFields=`<label>Project<select name="project_id"><option value="">No project</option>${projectOptions}</select></label><label>Event<select name="event_id" data-contribution-event><option value="">No event</option>${eventOptions}</select></label><label>Follow-up task<select name="follow_up_task_id"><option value="">No task</option>${taskOptions}</select></label>`;
+  const common=`<label>Contributor<select name="contributor_id" required><option value="">Choose identity…</option>${identityOptions}</select></label><label>Type<select name="contribution_type">${types}</select></label><label>Quantity<input type="number" min="0.01" step="any" name="quantity"></label><label>Unit<input name="unit" maxlength="80" placeholder="boards, bags, introductions…"></label><label>Money amount<input type="number" min="0.01" step="0.01" name="amount"></label><label>Currency<input name="currency" maxlength="3" placeholder="USD"></label>${linkFields}`;
+  const offerForm=`<section class="drawer-section contribution-editor"><h4>Record an offer</h4><form class="memory-form" data-contribution-offer-form><div class="memory-form-grid">${common}<label>Offered on<input type="date" name="offered_on" required></label><label>Follow-up<select name="follow_up_status"><option>Not Needed</option><option>Pending</option><option>Completed</option></select></label></div><label>Description<textarea name="description" rows="2" required></textarea></label><label>Restrictions<textarea name="restrictions" rows="2"></textarea></label><button class="button-primary" type="submit">Save Offer</button></form></section>`;
+  const receivedForm=`<section class="drawer-section contribution-editor"><h4>Record help received</h4><form class="memory-form" data-contribution-received-form><div class="memory-form-grid"><label>Against offer<select name="offer_id" data-contribution-offer><option value="">Direct contribution</option>${offerOptions}</select></label>${common}<label>Received on<input type="date" name="received_on" required></label><label>Work session<select name="work_session_id"><option value="">No linked session</option>${sessionOptions}</select></label><label>Thank-you<select name="thank_you_status"><option>Pending</option><option>Not Needed</option><option>Completed</option></select></label><label>Follow-up<select name="follow_up_status"><option>Not Needed</option><option>Pending</option><option>Completed</option></select></label></div><label>Description<textarea name="description" rows="2" required></textarea></label><label>Restrictions<textarea name="restrictions" rows="2"></textarea></label><button class="button-primary" type="submit">Save Received Contribution</button></form></section>`;
+  const offers=`<section class="drawer-section"><div class="section-row"><h4>Offers</h4><span>${x.offers.length}</span></div>${x.offers.map(o=>`<div class="contribution-card"><strong>${esc(o.contributor_name)} · ${esc(contributionTypeLabel(o.contribution_type))}</strong><span>${esc(o.description)}</span><small>${esc(o.offered_on)} · ${contributionAmount(o)} · ${esc(o.status)}</small><small>Remaining: ${o.remaining_quantity!=null?`${o.remaining_quantity} ${esc(o.unit||'')}`:o.remaining_amount_cents!=null?`${esc(o.currency)} ${(o.remaining_amount_cents/100).toFixed(2)}`:'unknown'}</small><div class="memory-form-actions">${['Open','Partially Fulfilled','Fulfilled','Cancelled'].map(s=>`<button type="button" data-offer-status="${o.id}" data-status-value="${s}" ${o.status===s?'disabled':''}>${s}</button>`).join('')}</div></div>`).join('')||'<p>No offers recorded.</p>'}</section>`;
+  const received=`<section class="drawer-section"><div class="section-row"><h4>Received</h4><span>${x.contributions.length}</span></div>${x.contributions.map(c=>`<div class="contribution-card"><strong>${esc(c.contributor_name)} · ${esc(contributionTypeLabel(c.contribution_type))}</strong><span>${esc(c.description)}</span><small>${esc(c.received_on)} · ${contributionAmount(c)}${c.offer_id?' · fulfillment':''}</small><small>Thank-you: ${esc(c.thank_you_status)} · Follow-up: ${esc(c.follow_up_status)}</small><div class="memory-form-actions"><button type="button" data-contribution-thank="${c.id}" data-current-status="${esc(c.thank_you_status)}">${c.thank_you_status==='Completed'?'Reopen thank-you':'Mark thanked'}</button><button type="button" data-contribution-follow="${c.id}" data-current-status="${esc(c.follow_up_status)}">${c.follow_up_status==='Completed'?'Reopen follow-up':'Complete follow-up'}</button></div></div>`).join('')||'<p>No received contributions recorded.</p>'}</section>`;
+  return `<section class="drawer-section contribution-boundary"><strong>Local trusted operator only</strong><span>No authentication or authorization is implemented. These records are excluded from shared state, WebSockets, exports, activity payloads, and AI context.</span></section>${offerForm}${receivedForm}${offers}${received}`;
+}
+
 function drawerPeople(){
   const people=state.people||[], categories=state.activity_categories||[], sessions=state.work_sessions||[], summary=state.work_summary||{};
   const active=sessions.filter(x=>!x.ended_at), recent=sessions.filter(x=>x.ended_at).slice(0,20);
   const projectOptions=(state.projects||[]).map(p=>`<option value="${p.id}">${esc(p.title)}</option>`).join('');
-  const personOptions=people.filter(p=>p.status==='Active').map(p=>`<option value="${p.id}">${esc(p.display_name)} · ${esc(p.person_type)}</option>`).join('');
+  const personOptions=people.filter(p=>p.status==='Active'&&(p.entity_kind||'Person')==='Person').map(p=>`<option value="${p.id}">${esc(p.display_name)} · ${esc(p.person_type)}</option>`).join('');
   const categoryOptions=categories.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
   const staff=`<section class="drawer-section"><div class="section-row"><h4>Campus Staff</h4><span>${state.agents.length}</span></div><div class="drawer-grid">${state.agents.map(a=>`<button type="button" class="drawer-card drawer-card-button staff-card staff-${esc(a.id)}" data-open-agent="${a.id}">
     <img class="staff-card-avatar portrait" src="${agentPortrait(a)}" alt="">
     <strong>${esc(a.name)}</strong><small>${esc(a.role)}</small><small>${esc(buildingById(a.building_id)?.name||'')} · ${esc(a.status)}</small>
   </button>`).join('')}</div></section>`;
   const poe=`<section class="drawer-section poe-operations-callout"><div><span class="profile-kicker">Poe · Operations & Volunteer Coordinator</span><h4>People & Work Ledger</h4><p>Record the facts once. Poe keeps volunteer, learning, and occasional paid hours organized so the same work can later support project, grant, and reporting views.</p><button type="button" class="button-quiet poe-report-button" data-open-panel="work_report">Open Work Hours Report</button></div><div class="work-summary-strip"><span><strong>${people.length}</strong> people</span><span><strong>${summary.active_count||0}</strong> clocked in</span><span><strong>${workMinutesLabel(summary.completed_minutes||0)}</strong> recorded</span></div></section>`;
-  const addPerson=`<section class="drawer-section"><h4>Add a person</h4><form class="memory-form" data-person-form><div class="memory-form-grid"><label>Name<input name="display_name" maxlength="180" required placeholder="Volunteer or worker name"></label><label>Type<select name="person_type"><option>Volunteer</option><option>Staff</option><option>Board</option><option>Contractor</option><option>Collaborator</option><option>Other</option></select></label></div><label class="poe-primary-check"><input type="checkbox" name="is_primary_user" value="1"> This is me — use this record when I say “me / I / my” to Poe.</label><label>Operational notes<textarea name="notes" rows="2" maxlength="4000" placeholder="Optional skills, interests, orientation note, or useful context"></textarea></label><div class="memory-form-actions"><button class="button-primary" type="submit">Add Person</button></div></form></section>`;
-  const peopleList=`<section class="drawer-section"><div class="section-row"><h4>People Ledger</h4><span>${people.length}</span></div>${people.length?`<div class="people-ledger-list">${people.map(p=>{const open=active.find(x=>Number(x.person_id)===Number(p.id));return `<div class="person-ledger-card"><span><strong>${esc(p.display_name)}${p.is_primary_user?'<b class="poe-me-badge">ME</b>':''}</strong><small>${esc(p.person_type)} · ${esc(p.status)}</small></span><span class="person-ledger-actions">${open?`<em class="work-live">CLOCKED IN · ${esc(open.activity_name||'Uncategorized')}</em>`:'<em>Ready</em>'}${!p.is_primary_user?`<button type="button" class="button-quiet" data-person-primary="${p.id}">This is me</button>`:''}</span></div>`}).join('')}</div>`:'<p>No volunteers or workers have been added yet.</p>'}</section>`;
+  const addPerson=`<section class="drawer-section"><h4>Add a person or organization</h4><form class="memory-form" data-person-form><div class="memory-form-grid"><label>Name<input name="display_name" maxlength="180" required placeholder="Person or organization name"></label><label>Identity<select name="entity_kind"><option>Person</option><option>Organization</option></select></label><label>Type<select name="person_type"><option>Volunteer</option><option>Staff</option><option>Board</option><option>Contractor</option><option>Collaborator</option><option>Sponsor</option><option>Community Organization</option><option>Other</option></select></label></div><label class="poe-primary-check"><input type="checkbox" name="is_primary_user" value="1"> This is me — Person identities only.</label><label>Operational notes<textarea name="notes" rows="2" maxlength="4000"></textarea></label><div class="memory-form-actions"><button class="button-primary" type="submit">Add Identity</button></div></form></section>`;
+  const peopleList=`<section class="drawer-section"><div class="section-row"><h4>People & Organizations</h4><span>${people.length}</span></div>${people.length?`<div class="people-ledger-list">${people.map(p=>{const kind=p.entity_kind||'Person',open=active.find(x=>Number(x.person_id)===Number(p.id));return `<div class="person-ledger-card"><span><strong>${esc(p.display_name)}${p.is_primary_user?'<b class="poe-me-badge">ME</b>':''}</strong><small>${esc(kind)} · ${esc(p.person_type)} · ${esc(p.status)}</small></span><span class="person-ledger-actions">${open?`<em class="work-live">CLOCKED IN · ${esc(open.activity_name||'Uncategorized')}</em>`:'<em>Ready</em>'}${kind==='Person'&&!p.is_primary_user?`<button type="button" class="button-quiet" data-person-primary="${p.id}">This is me</button>`:''}<button type="button" class="button-quiet" data-identity-kind="${p.id}" data-kind-value="${kind==='Person'?'Organization':'Person'}">Mark ${kind==='Person'?'organization':'person'}</button></span></div>`}).join('')}</div>`:'<p>No identities added yet.</p>'}</section>`;
   const clockIn=people.length?`<section class="drawer-section"><h4>Clock work in</h4><form class="memory-form" data-clock-in-form><div class="memory-form-grid"><label>Person<select name="person_id" required><option value="">Choose person…</option>${personOptions}</select></label><label>Participation<select name="participation_type"><option>Volunteer</option><option>Learning</option><option>Paid</option></select></label><label>Activity<select name="activity_category_id" required><option value="">Choose activity…</option>${categoryOptions}</select></label><label>Project / Program<select name="project_id"><option value="">No project</option>${projectOptions}</select></label></div><label>What are they doing?<textarea name="notes" rows="2" maxlength="4000" placeholder="Optional short work note"></textarea></label><div class="memory-form-actions"><button class="button-primary" type="submit">Poe · Clock In</button></div></form></section>`:'';
   const activeList=`<section class="drawer-section"><div class="section-row"><h4>Currently Clocked In</h4><span>${active.length}</span></div>${active.length?active.map(x=>`<div class="work-session-card active"><div><strong>${esc(x.person_name)}</strong><small>${esc(x.participation_type)} · ${esc(x.activity_name||'Uncategorized')}${x.project_title?` · ${esc(x.project_title)}`:''}</small><small>Started ${fmtTime(x.started_at,true)}</small>${x.notes?`<p>${esc(x.notes)}</p>`:''}</div><button type="button" data-work-clock-out="${x.id}">Clock Out</button></div>`).join(''):'<p>Nobody is clocked in right now.</p>'}</section>`;
   const recentList=`<section class="drawer-section"><div class="section-row"><h4>Recent Work</h4><span>${recent.length}</span></div>${recent.length?recent.map(x=>`<div class="work-session-card"><div><strong>${esc(x.person_name)} · ${workMinutesLabel(x.duration_minutes)}</strong><small>${esc(x.participation_type)} · ${esc(x.activity_name||'Uncategorized')}${x.project_title?` · ${esc(x.project_title)}`:''}</small><small>${x.entry_mode==='manual_duration'?`Remembered duration · ${esc(x.work_date||'date recorded')}`:`${fmtTime(x.started_at,true)} → ${fmtTime(x.ended_at,true)}`}</small>${x.notes?`<p>${esc(x.notes)}</p>`:''}</div><button type="button" class="button-quiet" data-work-edit="${x.id}">Correct</button></div>`).join(''):'<p>No completed work sessions yet.</p>'}</section>`;
-  return `${poe}${poeConversationCard()}${activeList}${clockIn}${addPerson}${peopleList}${recentList}${staff}`;
+  return `${poe}${poeConversationCard()}${activeList}${clockIn}${addPerson}${peopleList}${contributionLedgerPanel()}${recentList}${staff}`;
 }
 function grantAmountLabel(g){
   const min=g.amount_min==null?null:Number(g.amount_min), max=g.amount_max==null?null:Number(g.amount_max);
@@ -1647,6 +1676,7 @@ function openDrawer(panel,id=null,parent=null){
     return;
   }
   if(panel==='environment'&&!seasonalContext&&!seasonalContextError)void loadSeasonalContext();
+  if(panel==='people'&&!contributionLedger&&!contributionLedgerLoading)void loadContributionLedger();
 
   let kicker='Campus',title='Panel',html='';
   if(panel==='executive'){kicker='Executive';title='What Needs Me';html=drawerExecutive();}
@@ -2004,6 +2034,36 @@ async function post(url,body){
   const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
   if(!r.ok){let d={};try{d=await r.json();}catch{}throw new Error(d.detail||`Request failed (${r.status})`);}return r.json();
 }
+async function loadContributionLedger(){
+  contributionLedgerLoading=true;
+  if(activeView.panel==='people')openDrawer('people');
+  try{const r=await fetch('/api/community-contributions',{cache:'no-store'});if(!r.ok)throw new Error(`Contribution ledger failed (${r.status})`);contributionLedger=await r.json();}
+  catch(err){toast(err.message);}
+  finally{contributionLedgerLoading=false;if(activeView.panel==='people')openDrawer('people');}
+}
+function contributionFormBody(form,dateField){
+  const f=new FormData(form), money=String(f.get('amount')||'').trim(), quantity=String(f.get('quantity')||'').trim();
+  return {contributor_id:Number(f.get('contributor_id')||0),contribution_type:String(f.get('contribution_type')||''),description:String(f.get('description')||'').trim(),[dateField]:String(f.get(dateField)||''),quantity:quantity?Number(quantity):null,unit:quantity?String(f.get('unit')||'').trim()||null:null,amount_cents:money?Math.round(Number(money)*100):null,currency:money?String(f.get('currency')||'').trim().toUpperCase()||null:null,restrictions:String(f.get('restrictions')||'').trim(),project_id:f.get('project_id')?Number(f.get('project_id')):null,event_id:f.get('event_id')?Number(f.get('event_id')):null,follow_up_status:String(f.get('follow_up_status')||'Not Needed'),follow_up_task_id:f.get('follow_up_task_id')?Number(f.get('follow_up_task_id')):null,notes:''};
+}
+async function saveContributionOffer(form){
+  const body={...contributionFormBody(form,'offered_on'),status:'Open'};
+  try{await post('/api/community-contributions/offers',body);form.reset();toast('Offer recorded without changing any received contribution.');await loadContributionLedger();}catch(err){toast(err.message);}
+}
+async function saveContributionReceived(form){
+  const f=new FormData(form);form.dataset.submissionKey=form.dataset.submissionKey||(globalThis.crypto?.randomUUID?.()||`${Date.now()}-${Math.random()}`);
+  const body={...contributionFormBody(form,'received_on'),offer_id:f.get('offer_id')?Number(f.get('offer_id')):null,work_session_id:f.get('work_session_id')?Number(f.get('work_session_id')):null,thank_you_status:String(f.get('thank_you_status')||'Pending'),submission_key:form.dataset.submissionKey};
+  try{const result=await post('/api/community-contributions/received',body);form.reset();delete form.dataset.submissionKey;toast(result.status==='duplicate'?'That contribution was already recorded.':'Received contribution recorded.');await loadContributionLedger();}catch(err){toast(err.message);}
+}
+async function updateOfferStatus(id,status){
+  const item=contributionLedger?.offers?.find(x=>Number(x.id)===Number(id));if(!item)return;
+  try{await post(`/api/community-contributions/offers/${id}`,{status,follow_up_status:item.follow_up_status,follow_up_task_id:item.follow_up_task_id});await loadContributionLedger();}catch(err){toast(err.message);}
+}
+async function updateContributionStatus(id,kind,current){
+  const item=contributionLedger?.contributions?.find(x=>Number(x.id)===Number(id));if(!item)return;
+  const body={thank_you_status:item.thank_you_status,follow_up_status:item.follow_up_status,follow_up_task_id:item.follow_up_task_id};
+  if(kind==='thank')body.thank_you_status=current==='Completed'?'Pending':'Completed';else body.follow_up_status=current==='Completed'?'Pending':'Completed';
+  try{await post(`/api/community-contributions/received/${id}`,body);await loadContributionLedger();}catch(err){toast(err.message);}
+}
 async function loadWorkReport(filters=null){
   if(filters)workReportFilters={...workReportFilters,...filters};
   workReportLoading=true;
@@ -2027,10 +2087,11 @@ function readWorkReportFilters(form){
 
 async function savePerson(form){
   const fd=new FormData(form);
-  const body={display_name:String(fd.get('display_name')||'').trim(),person_type:String(fd.get('person_type')||'Volunteer'),notes:String(fd.get('notes')||''),is_primary_user:fd.get('is_primary_user')==='1'};
+  const body={display_name:String(fd.get('display_name')||'').trim(),entity_kind:String(fd.get('entity_kind')||'Person'),person_type:String(fd.get('person_type')||'Volunteer'),notes:String(fd.get('notes')||''),is_primary_user:fd.get('is_primary_user')==='1',duplicate_acknowledged:false};
   if(!body.display_name){toast('Add a name first.');return;}
-  try{await post('/api/people',body);form.reset();toast(`${body.display_name} added to Poe’s people ledger.`);}catch(err){toast(err.message);}
+  try{let result=await post('/api/people',body);if(result.status==='duplicate_warning'){const names=result.possible_duplicates.map(x=>`${x.display_name} (${x.entity_kind})`).join(', ');if(!confirm(`Possible duplicate: ${names}. Create a separate identity anyway?`))return;result=await post('/api/people',{...body,duplicate_acknowledged:true});}form.reset();contributionLedger=null;toast(`${body.display_name} added to Poe’s identity ledger.`);}catch(err){toast(err.message);}
 }
+async function setIdentityKind(id,entity_kind){try{await post(`/api/people/${id}/identity-kind`,{entity_kind});contributionLedger=null;toast(`Identity marked ${entity_kind.toLowerCase()}.`);}catch(err){toast(err.message);}}
 async function saveCalendarEvent(form){
   const f=new FormData(form), id=Number(form.dataset.eventId||0)||null;
   const body={
@@ -2651,6 +2712,11 @@ els.drawerBody.addEventListener('click',e=>{
   else if(btn.dataset.grantEdit){grantEditingId=Number(btn.dataset.grantEdit);openDrawer('grants');}
   else if(btn.hasAttribute('data-grant-edit-cancel')){grantEditingId=null;openDrawer('grants');}
   else if(btn.dataset.personPrimary)setPrimaryPerson(btn.dataset.personPrimary);
+  else if(btn.hasAttribute('data-load-contributions'))loadContributionLedger();
+  else if(btn.dataset.identityKind)setIdentityKind(btn.dataset.identityKind,btn.dataset.kindValue);
+  else if(btn.dataset.offerStatus)updateOfferStatus(btn.dataset.offerStatus,btn.dataset.statusValue);
+  else if(btn.dataset.contributionThank)updateContributionStatus(btn.dataset.contributionThank,'thank',btn.dataset.currentStatus);
+  else if(btn.dataset.contributionFollow)updateContributionStatus(btn.dataset.contributionFollow,'follow',btn.dataset.currentStatus);
   else if(btn.hasAttribute('data-poe-open-report'))openPoeReportResult();
   else if(btn.dataset.poeExample){const ta=els.drawerBody.querySelector('[data-poe-command-form] textarea[name="text"]');if(ta){ta.value=btn.dataset.poeExample;ta.focus();}}
   else if(btn.dataset.vernadetteExample){const ta=els.drawerBody.querySelector('[data-vernadette-command-form] textarea[name="text"]');if(ta){ta.value=btn.dataset.vernadetteExample;ta.focus();}}
@@ -2688,6 +2754,17 @@ els.drawerBody.addEventListener('input',e=>{
   }
 });
 els.drawerBody.addEventListener('change',e=>{
+  if(e.target.matches('[data-contribution-event]')){
+    const option=e.target.selectedOptions[0],project=option?.dataset.projectId,form=e.target.closest('form');
+    if(project&&form?.elements.project_id)form.elements.project_id.value=project;
+  }
+  if(e.target.matches('[data-contribution-offer]')){
+    const option=e.target.selectedOptions[0],form=e.target.closest('form');if(!form||!option?.value)return;
+    if(form.elements.contributor_id)form.elements.contributor_id.value=option.dataset.personId||'';
+    if(form.elements.contribution_type)form.elements.contribution_type.value=option.dataset.type||'';
+    if(form.elements.project_id)form.elements.project_id.value=option.dataset.projectId||'';
+    if(form.elements.event_id)form.elements.event_id.value=option.dataset.eventId||'';
+  }
   if(e.target.matches('[data-repository-kind]')){
     repositoryKind=e.target.value||'all';
     openDrawer('repository');
@@ -2722,6 +2799,8 @@ els.drawerBody.addEventListener('submit',e=>{
   if(form.hasAttribute('data-calendar-event-form')){saveCalendarEvent(form);return;}
   if(form.hasAttribute('data-grant-form')){saveGrant(form);return;}
   if(form.hasAttribute('data-person-form')){savePerson(form);return;}
+  if(form.hasAttribute('data-contribution-offer-form')){saveContributionOffer(form);return;}
+  if(form.hasAttribute('data-contribution-received-form')){saveContributionReceived(form);return;}
   if(form.hasAttribute('data-clock-in-form')){clockInWork(form);return;}
   const body=form.elements.body?.value?.trim();if(!body){toast('Write a note first.');return;}
   if(form.dataset.noteProject)saveNote('project',form.dataset.noteProject,body);

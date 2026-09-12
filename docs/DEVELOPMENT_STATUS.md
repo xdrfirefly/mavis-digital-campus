@@ -9,13 +9,15 @@ Audit scope: repository contents as inspected on 2026-09-07. This document does 
 - Stella Daily Steward and Ask the Campus routing, including deterministic local paths and optional role AI advice.
 - Daily Steward's Library Class Commitment Spine uses scheduled, explicitly project-linked events in a 14-day look-ahead to support that active project's existing next task. The bounded date boost is 18 points at 0–3 days, 12 at 4–7 days, and 6 at 8–14 days; it remains below human-gate and blocker precedence, creates no work, and does not assume that a task is preparation.
 - Trusted Library intake, human cataloging, local text extraction/indexing, collections, playbooks, and institutional-memory records.
+- Rose can answer explicit Library inventory requests in Ask Campus through deterministic local retrieval, listing exact stored titles and material types only for `Cataloged` materials in `Active` collections. Confirmed empty results and retrieval failures remain distinct; the inventory path performs no AI/network calls or writes and does not replace topic search.
 - People ledger, work sessions with audit records, clock in/out, deterministic Poe commands, reports, and CSV export.
+- Manual Community Contribution Ledger for Person/Organization identities, offers, received money/sponsorships, goods/materials, professional services, equipment/space, and introductions/outreach. It supports project/event links, existing follow-up tasks, completed work-session links, thank-you/follow-up status, multiple fulfillments, unknown values, and idempotent received-entry submission keys without adding ledger details to shared state, WebSockets, exports, AI context, or general logs.
 - Events/calendar foundation, local moon calculation, weather/seasonal data storage and refresh adapter.
 - Phase 1 phenology observations with human, imported, and suggested sources; Rose review can confirm or reject suggestions without feeding planning logic.
 - Phase 2 trusted phenology history comparison across years, including optional location filtering and factual date summaries.
 - Phase 5 Seasonal Context: Rose's read-only, 45-day seasonal evidence bridge separates established observations from open checks; Stella can summarize it through Ask Campus and users can inspect the same context in Weather & Seasons → Phenology, without affecting Daily Steward or planning.
 - Grants.gov discovery/import and local grant tracking.
-- 201 test functions in `tests/test_smoke.py`, covering backend behavior plus static/UI regression guards.
+- 218 test functions in `tests/test_smoke.py`, covering backend behavior plus static/UI regression guards.
 
 ## Partial
 
@@ -28,8 +30,8 @@ Audit scope: repository contents as inspected on 2026-09-07. This document does 
 
 - Google Calendar synchronization is explicitly shown as disconnected/deferred in code/tests and README history.
 - The product canon includes Plant/Living System and Property Asset concepts; no corresponding standalone SQLite tables were found.
-- The next operating-cycle milestone is durable community contribution tracking for donations, goods, services, equipment/space, introductions/outreach, outstanding offers, thank-yous, and follow-ups. It is not implemented in the Commitment Spine.
-- Personal/nonprofit permissions require a separate design before shared access is expanded.
+- Natural-language contribution capture, automated communications, contribution exports/dashboards, and broad reporting remain deferred.
+- The supported deployment is local trusted-operator use on `127.0.0.1`. There is no authentication or authorization; personal/nonprofit permissions require a separate design before shared, volunteer-facing, LAN, or public access is expanded.
 - The README identifies future integrations such as broader grant sources and additional operational automation; they were not treated as implemented.
 
 ## Technical Risks
