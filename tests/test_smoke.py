@@ -6798,8 +6798,11 @@ def test_v08698_vernadette_next_deadline_and_ambiguity(tmp_path, monkeypatch):
     appmod.init_db()
     with appmod.db() as conn:
         now=appmod.utc_now()
-        conn.execute("INSERT INTO grants(funder,title,deadline,status,mission_fit,workload,restrictions,strategic_value,recommendation,created_at,updated_at) VALUES('One Fund','Garden One','2026-09-12','Reviewing',3,3,3,3,'Review',?,?)",(now,now))
-        conn.execute("INSERT INTO grants(funder,title,deadline,status,mission_fit,workload,restrictions,strategic_value,recommendation,created_at,updated_at) VALUES('Two Fund','Garden Two','2026-09-20','Pursue',3,3,3,3,'Pursue',?,?)",(now,now))
+        today=appmod._vernadette_local_today(conn)
+        first=(today+appmod.timedelta(days=1)).isoformat()
+        second=(today+appmod.timedelta(days=8)).isoformat()
+        conn.execute("INSERT INTO grants(funder,title,deadline,status,mission_fit,workload,restrictions,strategic_value,recommendation,created_at,updated_at) VALUES('One Fund','Garden One',?,'Reviewing',3,3,3,3,'Review',?,?)",(first,now,now))
+        conn.execute("INSERT INTO grants(funder,title,deadline,status,mission_fit,workload,restrictions,strategic_value,recommendation,created_at,updated_at) VALUES('Two Fund','Garden Two',?,'Pursue',3,3,3,3,'Pursue',?,?)",(second,now,now))
     next_one = asyncio.run(appmod.api_vernadette_command(appmod.VernadetteCommandRequest(text='Vernadette, what is the next grant deadline?')))
     assert next_one['status'] == 'ok'
     assert next_one['grants'][0]['title'] == 'Garden One'
@@ -7528,6 +7531,65 @@ def test_v097_rose_library_inventory_intent_does_not_capture_topic_search():
     assert campus._campus_library_inventory_intent("Research the history of barn construction in the Library.") is False
     assert campus._campus_auto_route("Search the local Library for tincture safety guidance.") == "rose"
     assert campus._campus_library_inventory_intent("What materials are currently available in the local Library?") is True
+
+
+def test_monthly_participation_uses_selected_person_month_and_completed_sessions(tmp_path, monkeypatch):
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "monthly-participation.db")
+    campus.init_db()
+    alice = asyncio.run(campus.api_person_create(campus.PersonRequest(display_name="Alice Example", person_type="Volunteer")))
+    bob = asyncio.run(campus.api_person_create(campus.PersonRequest(display_name="Bob Example", person_type="Volunteer")))
+    with campus.db() as conn:
+        activity_id = int(conn.execute("SELECT id FROM activity_categories ORDER BY id LIMIT 1").fetchone()[0])
+        now = campus.utc_now()
+        conn.execute("INSERT INTO work_sessions(person_id,activity_category_id,participation_type,started_at,ended_at,duration_minutes,notes,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (alice["person_id"],activity_id,"Volunteer","2026-08-05T13:00:00+00:00","2026-08-05T14:30:00+00:00",90,"Garden support","Poe",now,now))
+        conn.execute("INSERT INTO work_sessions(person_id,activity_category_id,participation_type,started_at,ended_at,duration_minutes,notes,created_by,created_at,updated_at) VALUES(?,?,?,?,NULL,NULL,?,?,?,?)", (alice["person_id"],activity_id,"Volunteer","2026-08-12T13:00:00+00:00","Open session","Poe",now,now))
+        conn.execute("INSERT INTO work_sessions(person_id,activity_category_id,participation_type,started_at,ended_at,duration_minutes,notes,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (alice["person_id"],activity_id,"Volunteer","2026-09-03T13:00:00+00:00","2026-09-03T14:00:00+00:00",60,"Following month","Poe",now,now))
+        conn.execute("INSERT INTO work_sessions(person_id,activity_category_id,participation_type,started_at,ended_at,duration_minutes,notes,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (bob["person_id"],activity_id,"Volunteer","2026-08-06T13:00:00+00:00","2026-08-06T18:00:00+00:00",300,"Other person","Poe",now,now))
+    asyncio.run(campus.api_work_manual(campus.WorkManualRequest(person_id=alice["person_id"],work_date="2026-08-10",activity_category_id=activity_id,duration_minutes=120,description="Prepared class materials")))
+
+    august = asyncio.run(campus.api_monthly_participation(alice["person_id"], "2026-08"))
+    september = asyncio.run(campus.api_monthly_participation(alice["person_id"], "2026-09"))
+    assert august["total_minutes"] == 210 and august["total_hours"] == 3.5
+    assert august["remaining_minutes"] == 4590 and august["target_hours"] == 80
+    assert [item["local_date"] for item in august["sessions"]] == ["2026-08-05", "2026-08-10"]
+    assert {item["notes"] for item in august["sessions"]} == {"Garden support", "Prepared class materials"}
+    assert september["total_minutes"] == 60
+    with campus.db() as conn:
+        manual = conn.execute("SELECT entry_mode,duration_minutes FROM work_sessions WHERE person_id=? AND work_date='2026-08-10'", (alice["person_id"],)).fetchone()
+        assert tuple(manual) == ("manual_duration", 120)
+        assert conn.execute("SELECT COUNT(*) FROM work_session_audit WHERE work_session_id=(SELECT id FROM work_sessions WHERE person_id=? AND work_date='2026-08-10')", (alice["person_id"],)).fetchone()[0] == 1
+
+
+def test_monthly_participation_csv_is_exact_and_organizations_have_no_target(tmp_path, monkeypatch):
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "monthly-csv.db")
+    campus.init_db()
+    person = asyncio.run(campus.api_person_create(campus.PersonRequest(display_name="Sam Person", entity_kind="Person")))
+    organization = asyncio.run(campus.api_person_create(campus.PersonRequest(display_name="Sam Organization", entity_kind="Organization", person_type="Community Organization")))
+    with campus.db() as conn:
+        activity_id = int(conn.execute("SELECT id FROM activity_categories ORDER BY id LIMIT 1").fetchone()[0])
+    asyncio.run(campus.api_work_manual(campus.WorkManualRequest(person_id=person["person_id"],work_date="2026-07-04",activity_category_id=activity_id,duration_minutes=75,description="Community event setup")))
+    response = asyncio.run(campus.api_monthly_participation_csv(person["person_id"], "2026-07"))
+    text = response.body.decode("utf-8-sig")
+    assert "Sam Person" in text and "2026-07-04" in text and "Community event setup" in text
+    assert "Monthly Total" in text and ",75,1.25" in text
+    assert "Sam Organization" not in text and "2026-08" not in text
+    org_record = asyncio.run(campus.api_monthly_participation(organization["person_id"], "2026-07"))
+    assert org_record["target_minutes"] is None and org_record["remaining_minutes"] is None
+    assert org_record["target_reached"] is False
+
+
+def test_people_participation_ui_structure_and_existing_boundaries_remain():
+    app_text = (ROOT / "app.py").read_text(encoding="utf-8")
+    js = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
+    css = (ROOT / "static/css/app.css").read_text(encoding="utf-8")
+    assert "Directory" in js and "Work Hours" in js and "Contributions" in js
+    assert "Add Person" in js and "Add Organization" in js and "More details" in js
+    assert "Monthly Participation Record" in js and "Print Monthly Record" in js and "Download CSV" in js
+    assert "Tracking target only; this is not an eligibility determination." in js
+    assert "@media print" in css and ".print-monthly-record" in css
+    assert "/api/work-report.csv" in js and "/api/community-contributions" in js
+    assert "_campus_library_inventory_intent" in app_text and "No Cataloged materials in Active collections." in app_text
+    assert "Medicaid" not in app_text and "Medicaid" not in js
 
 
 def test_v08742_campus_ask_explicit_project_requires_confirmation(tmp_path, monkeypatch):

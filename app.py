@@ -4819,6 +4819,65 @@ def work_report_data(
     }
 
 
+MONTHLY_PARTICIPATION_TARGET_MINUTES = 80 * 60
+
+
+def _participation_month_bounds(value: str) -> tuple[date, date]:
+    text = str(value or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}", text):
+        raise HTTPException(status_code=400, detail="month must use YYYY-MM.")
+    try:
+        start = date.fromisoformat(f"{text}-01")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="month must be a valid YYYY-MM value.") from exc
+    following = date(start.year + (1 if start.month == 12 else 0), 1 if start.month == 12 else start.month + 1, 1)
+    return start, following - timedelta(days=1)
+
+
+def monthly_participation_record(conn: sqlite3.Connection, person_id: int, month: str) -> dict[str, Any]:
+    person = conn.execute("SELECT * FROM people WHERE id=?", (int(person_id),)).fetchone()
+    if not person:
+        raise HTTPException(status_code=404, detail="Identity not found.")
+    start, end = _participation_month_bounds(month)
+    report = work_report_data(conn, person_id=int(person_id), start_date=start.isoformat(), end_date=end.isoformat())
+    sessions = sorted(report["sessions"], key=lambda item: (str(item.get("local_date") or ""), int(item.get("id") or 0)))
+    is_person = str(person["entity_kind"] or "Person") == "Person"
+    target = MONTHLY_PARTICIPATION_TARGET_MINUTES if is_person else None
+    total = int(report["summary"]["minutes"] or 0)
+    return {
+        "person": {
+            "id": int(person["id"]), "display_name": person["display_name"], "person_type": person["person_type"],
+            "status": person["status"], "entity_kind": person["entity_kind"] or "Person",
+        },
+        "month": start.strftime("%Y-%m"),
+        "month_label": start.strftime("%B %Y"),
+        "timezone_name": report["timezone_name"],
+        "target_minutes": target,
+        "target_hours": round(target / 60, 2) if target is not None else None,
+        "total_minutes": total,
+        "total_hours": round(total / 60, 2),
+        "remaining_minutes": max(0, target - total) if target is not None else None,
+        "remaining_hours": round(max(0, target - total) / 60, 2) if target is not None else None,
+        "target_reached": bool(target is not None and total >= target),
+        "sessions": sessions,
+        "generated_on": _poe_local_today(conn).isoformat(),
+        "statement": "This record documents participation recorded by The Mavis Institute and does not determine benefit eligibility.",
+    }
+
+
+def people_directory_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    people = rows(conn, "SELECT * FROM people ORDER BY CASE status WHEN 'Active' THEN 0 ELSE 1 END,display_name COLLATE NOCASE,id")
+    today = _poe_local_today(conn)
+    start = today.replace(day=1)
+    following = date(start.year + (1 if start.month == 12 else 0), 1 if start.month == 12 else start.month + 1, 1)
+    report = work_report_data(conn, start_date=start.isoformat(), end_date=(following - timedelta(days=1)).isoformat())
+    totals = {int(item["key"]): int(item["minutes"] or 0) for item in report["by_person"]}
+    for person in people:
+        person["current_month_minutes"] = totals.get(int(person["id"]), 0)
+        person["current_month_hours"] = round(person["current_month_minutes"] / 60, 2)
+    return people
+
+
 def _work_report_csv(report: dict[str, Any]) -> str:
     output = io.StringIO(newline="")
     writer = csv.writer(output)
@@ -4833,6 +4892,21 @@ def _work_report_csv(report: dict[str, Any]) -> str:
             item.get("local_date"), item.get("entry_mode") or "clock", item.get("local_started_at"), item.get("local_ended_at"), item.get("duration_minutes"),
             item.get("duration_hours"), item.get("notes") or "", item.get("created_by") or "", item.get("updated_at") or "",
         ])
+    return output.getvalue()
+
+
+def _monthly_participation_csv(record: dict[str, Any]) -> str:
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["The Mavis Institute", "Monthly Participation Record"])
+    writer.writerow(["Person", record["person"]["display_name"]])
+    writer.writerow(["Reporting Month", record["month_label"]])
+    writer.writerow(["Date", "Activity", "Work Description / Notes", "Project / Program", "Participation Type", "Duration Minutes", "Duration Hours"])
+    for item in record["sessions"]:
+        writer.writerow([item.get("local_date"), item.get("activity_name") or "Uncategorized", item.get("notes") or "", item.get("project_title") or "", item.get("participation_type") or "", item.get("duration_minutes"), item.get("duration_hours")])
+    writer.writerow([])
+    writer.writerow(["Monthly Total", "", "", "", "", record["total_minutes"], record["total_hours"]])
+    writer.writerow(["Statement", record["statement"]])
     return output.getvalue()
 
 
@@ -5635,7 +5709,7 @@ def current_state() -> dict[str, Any]:
         return {
             "buildings": rows(conn, "SELECT * FROM buildings ORDER BY name"),
             "agents": rows(conn, "SELECT * FROM agents ORDER BY name"),
-            "people": rows(conn, "SELECT * FROM people ORDER BY CASE status WHEN 'Active' THEN 0 ELSE 1 END,display_name COLLATE NOCASE,id"),
+            "people": people_directory_rows(conn),
             "activity_categories": rows(conn, "SELECT * FROM activity_categories WHERE active=1 ORDER BY sort_order,name"),
             "work_sessions": work_session_rows(conn),
             "work_session_audit": rows(conn, "SELECT * FROM work_session_audit ORDER BY id DESC LIMIT 250"),
@@ -7413,6 +7487,17 @@ class WorkClockInRequest(BaseModel):
     notes: str = ""
 
 
+class WorkManualRequest(BaseModel):
+    person_id: int
+    work_date: str
+    activity_category_id: int
+    duration_minutes: int
+    description: str
+    project_id: int | None = None
+    participation_type: str = "Volunteer"
+    notes: str = ""
+
+
 class WorkClockOutRequest(BaseModel):
     ended_at: str | None = None
     notes: str | None = None
@@ -8075,6 +8160,24 @@ async def api_work_report_csv(
     )
 
 
+@app.get("/api/people/{person_id}/monthly-participation")
+async def api_monthly_participation(person_id: int, month: str) -> dict[str, Any]:
+    with db() as conn:
+        return monthly_participation_record(conn, person_id, month)
+
+
+@app.get("/api/people/{person_id}/monthly-participation.csv")
+async def api_monthly_participation_csv(person_id: int, month: str) -> Response:
+    with db() as conn:
+        record = monthly_participation_record(conn, person_id, month)
+    csv_text = _monthly_participation_csv(record)
+    return Response(
+        content="\ufeff" + csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="mavis-participation-{int(person_id)}-{record["month"]}.csv"', "Cache-Control": "no-store"},
+    )
+
+
 def _identity_name_key(value: str) -> str:
     return " ".join(str(value or "").casefold().split())
 
@@ -8230,6 +8333,38 @@ async def api_person_create(req: PersonRequest) -> dict[str, Any]:
         log(conn, "people", "Poe", f"Added {name} to the Campus people ledger as {person_type}.")
     await hub.broadcast()
     return {"person_id": person_id, "status": "created"}
+
+
+@app.post("/api/people/{person_id}")
+async def api_person_update(person_id: int, req: PersonRequest) -> dict[str, Any]:
+    name = " ".join(str(req.display_name or "").split()).strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="A person name is required.")
+    entity_kind = str(req.entity_kind or "Person").strip().title()
+    if entity_kind not in IDENTITY_KINDS:
+        raise HTTPException(status_code=400, detail="Identity kind must be Person or Organization.")
+    with db() as conn:
+        current = conn.execute("SELECT * FROM people WHERE id=?", (int(person_id),)).fetchone()
+        if not current:
+            raise HTTPException(status_code=404, detail="Identity not found.")
+        duplicates = [item for item in _possible_identity_duplicates(conn, name) if int(item["id"]) != int(person_id)]
+        if duplicates and not req.duplicate_acknowledged:
+            return {"status":"duplicate_warning", "message":"A similar identity already exists. Review it before deliberately saving this record.", "possible_duplicates":duplicates}
+        if entity_kind == "Organization" and conn.execute("SELECT 1 FROM work_sessions WHERE person_id=? LIMIT 1", (int(person_id),)).fetchone():
+            raise HTTPException(status_code=409, detail="An identity with work sessions must remain a Person.")
+        if entity_kind == "Organization" and (int(current["is_primary_user"] or 0) or req.is_primary_user):
+            raise HTTPException(status_code=409, detail="The primary-user identity must remain a Person.")
+        if req.is_primary_user:
+            conn.execute("UPDATE people SET is_primary_user=0,updated_at=? WHERE is_primary_user=1", (utc_now(),))
+        status = "Inactive" if str(req.status or "Active").strip().lower() == "inactive" else "Active"
+        person_type = " ".join(str(req.person_type or "Volunteer").split()).strip()[:80] or "Volunteer"
+        conn.execute(
+            "UPDATE people SET display_name=?,person_type=?,status=?,contact_info=?,notes=?,is_primary_user=?,entity_kind=?,updated_at=? WHERE id=?",
+            (name, person_type, status, str(req.contact_info or "")[:1200], str(req.notes or "")[:4000], 1 if req.is_primary_user else 0, entity_kind, utc_now(), int(person_id)),
+        )
+        log(conn, "people", "Poe", f"Updated the participation identity for {name}.")
+    await hub.broadcast()
+    return {"person_id": int(person_id), "status": "updated"}
 
 
 @app.post("/api/people/{person_id}/identity-kind")
@@ -8479,6 +8614,42 @@ async def api_poe_command(req: PoeCommandRequest) -> dict[str, Any]:
         "intent": "unknown",
         "message": "I can handle work-hour commands right now. Try: ‘Clock me in for farm work,’ ‘Clock Lisa out,’ ‘Add 2 hours yesterday for Sam doing maintenance,’ or ‘Show me our education hours this month.’",
     }
+
+
+@app.post("/api/work-sessions/manual")
+async def api_work_manual(req: WorkManualRequest) -> dict[str, Any]:
+    try:
+        work_day = date.fromisoformat(str(req.work_date or ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="work_date must use YYYY-MM-DD.") from exc
+    duration = int(req.duration_minutes or 0)
+    if duration <= 0:
+        raise HTTPException(status_code=400, detail="duration_minutes must be greater than zero.")
+    description = " ".join(str(req.description or "").split()).strip()
+    if not description:
+        raise HTTPException(status_code=400, detail="A short work description is required.")
+    participation = " ".join(str(req.participation_type or "Volunteer").split()).strip()[:80] or "Volunteer"
+    with db() as conn:
+        person = conn.execute("SELECT * FROM people WHERE id=?", (int(req.person_id),)).fetchone()
+        if not person:
+            raise HTTPException(status_code=404, detail="Person not found.")
+        if str(person["entity_kind"] or "Person") != "Person":
+            raise HTTPException(status_code=409, detail="Organizations cannot receive work sessions.")
+        category = conn.execute("SELECT id FROM activity_categories WHERE id=? AND active=1", (int(req.activity_category_id),)).fetchone()
+        if not category:
+            raise HTTPException(status_code=404, detail="Activity category not found.")
+        if req.project_id is not None and not conn.execute("SELECT id FROM projects WHERE id=?", (int(req.project_id),)).fetchone():
+            raise HTTPException(status_code=404, detail="Project not found.")
+        if work_day > _poe_local_today(conn):
+            raise HTTPException(status_code=400, detail="Completed hours cannot be recorded in the future.")
+        note = description
+        extra = str(req.notes or "").strip()
+        if extra:
+            note = f"{description}\n{extra}"
+        session_id = _poe_manual_session(conn, person_id=int(req.person_id), activity_category_id=int(req.activity_category_id), participation_type=participation, work_day=work_day, duration_minutes=duration, project_id=req.project_id, notes=note)
+        log(conn, "work", "Poe", f"Recorded {duration} minute(s) of participation for {person['display_name']} on {work_day.isoformat()}.")
+    await hub.broadcast()
+    return {"session_id": session_id, "status": "recorded", "duration_minutes": duration, "work_date": work_day.isoformat()}
 
 
 @app.post("/api/work-sessions/clock-in")

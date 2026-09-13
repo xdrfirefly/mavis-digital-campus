@@ -11,13 +11,14 @@ Audit scope: repository contents as inspected on 2026-09-07. This document does 
 - Trusted Library intake, human cataloging, local text extraction/indexing, collections, playbooks, and institutional-memory records.
 - Rose can answer explicit Library inventory requests in Ask Campus through deterministic local retrieval, listing exact stored titles and material types only for `Cataloged` materials in `Active` collections. Confirmed empty results and retrieval failures remain distinct; the inventory path performs no AI/network calls or writes and does not replace topic search.
 - People ledger, work sessions with audit records, clock in/out, deterministic Poe commands, reports, and CSV export.
+- People now opens to a simplified Directory with separate Work Hours and Contributions subviews. Person profiles expose a timezone-aware Monthly Participation Record derived from completed Work Sessions, a clearly labeled 80-hour monthly tracking target, streamlined audited manual Add Hours, exact person/month CSV, and a print-friendly browser record with verifier lines and an eligibility disclaimer. Organizations have no personal participation target.
 - Manual Community Contribution Ledger for Person/Organization identities, offers, received money/sponsorships, goods/materials, professional services, equipment/space, and introductions/outreach. It supports project/event links, existing follow-up tasks, completed work-session links, thank-you/follow-up status, multiple fulfillments, unknown values, and idempotent received-entry submission keys without adding ledger details to shared state, WebSockets, exports, AI context, or general logs.
 - Events/calendar foundation, local moon calculation, weather/seasonal data storage and refresh adapter.
 - Phase 1 phenology observations with human, imported, and suggested sources; Rose review can confirm or reject suggestions without feeding planning logic.
 - Phase 2 trusted phenology history comparison across years, including optional location filtering and factual date summaries.
 - Phase 5 Seasonal Context: Rose's read-only, 45-day seasonal evidence bridge separates established observations from open checks; Stella can summarize it through Ask Campus and users can inspect the same context in Weather & Seasons → Phenology, without affecting Daily Steward or planning.
 - Grants.gov discovery/import and local grant tracking.
-- 218 test functions in `tests/test_smoke.py`, covering backend behavior plus static/UI regression guards.
+- 221 test functions in `tests/test_smoke.py`, covering backend behavior plus static/UI regression guards.
 
 ## Partial
 
