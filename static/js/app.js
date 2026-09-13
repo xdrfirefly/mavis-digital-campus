@@ -82,6 +82,8 @@ let monthlyRecordLoading = false;
 let monthlyRecordMonth = new Date().toISOString().slice(0,7);
 let poeCommandResult = null;
 let poeCommandSubmitting = false;
+let poePendingCommand = '';
+let poeSuggestedPersonId = null;
 let stellaDailyResult = null;
 let stellaDailySubmitting = false;
 let workReportFilters = {person_id:'',activity_category_id:'',project_id:'',participation_type:'',start_date:'',end_date:''};
@@ -816,8 +818,9 @@ function drawerWorkReport(){
 
 function poeConversationCard(){
   const result=poeCommandResult;
-  const response=result?`<div class="poe-command-response ${esc(result.status||'ok')}"><strong>${result.status==='clarification'?'Poe needs one detail':'Poe'}</strong><p>${esc(result.message||'')}</p>${result.report_filters?'<button type="button" class="button-quiet" data-poe-open-report>Open These Hours</button>':''}</div>`:'';
-  return `<section class="drawer-section poe-command-card"><div class="section-row"><div><span class="profile-kicker">Talk to Poe</span><h4>Natural Work Commands</h4></div><span>local · no AI call</span></div><p>Tell Poe what happened in ordinary language. He only changes the People & Work ledger when the command is clear enough to do safely.</p><form class="poe-command-form" data-poe-command-form><label>What should Poe do?<textarea name="text" rows="3" maxlength="1000" placeholder="Poe, clock me in for farm work on the Monastic Garden."></textarea></label><div class="poe-command-examples"><span>Try:</span><button type="button" data-poe-example="Poe, clock me in for farm work.">Clock me in</button><button type="button" data-poe-example="Poe, show me our education hours this month.">Show hours</button><button type="button" data-poe-example="Poe, add 2 hours yesterday for Sam doing maintenance.">Remember past work</button></div><div class="memory-form-actions"><button class="button-primary" type="submit" ${poeCommandSubmitting?'disabled':''}>${poeCommandSubmitting?'Poe is checking…':'Ask Poe'}</button></div></form>${response}</section>`;
+  const pending=poePendingCommand?'<small>Poe is holding the details from your previous message.</small><button type="button" class="button-quiet" data-poe-clear-pending>Start over</button>':'';
+  const response=result?`<div class="poe-command-response ${esc(result.status||'ok')}"><strong>${result.status==='clarification'?'Poe needs one detail':'Poe'}</strong><p>${esc(result.message||'')}</p>${result.report_filters?'<button type="button" class="button-quiet" data-poe-open-report>Open These Hours</button>':''}${pending}</div>`:'';
+  return `<section class="drawer-section poe-command-card"><div class="section-row"><div><span class="profile-kicker">Talk to Poe</span><h4>Natural Work Commands</h4></div><span>local · no AI call</span></div><p>Tell Poe what happened in ordinary language. He only changes the People & Work ledger when the command is clear enough to do safely.</p><form class="poe-command-form" data-poe-command-form><label>${poePendingCommand?'Reply to Poe':'What should Poe do?'}<textarea name="text" rows="3" maxlength="1000" placeholder="${poePendingCommand?'Type the missing detail or confirm the name.':'Justyn worked 4 hours on 9.11.26 doing animal care.'}"></textarea></label><div class="poe-command-examples"><span>Try:</span><button type="button" data-poe-example="Poe, clock me in for farm work.">Clock me in</button><button type="button" data-poe-example="Poe, show me our education hours this month.">Show hours</button><button type="button" data-poe-example="Justyn worked 4 hours on 9.11.26 doing animal care.">Remember past work</button></div><div class="memory-form-actions"><button class="button-primary" type="submit" ${poeCommandSubmitting?'disabled':''}>${poeCommandSubmitting?'Poe is checking…':'Ask Poe'}</button></div></form>${response}</section>`;
 }
 
 function eventById(id){return (state.events||[]).find(x=>Number(x.id)===Number(id));}
@@ -2209,7 +2212,13 @@ async function sendPoeCommand(form){
   if(!text){toast('Tell Poe what you want him to do.');return;}
   poeCommandSubmitting=true;poeCommandResult=null;openDrawer(activeView.panel,activeView.id,activeView.parent);
   try{
-    poeCommandResult=await post('/api/poe/command',{text});
+    poeCommandResult=await post('/api/poe/command',{text,previous_command:poePendingCommand||null,suggested_person_id:poeSuggestedPersonId});
+    if(poeCommandResult.status==='clarification'){
+      poePendingCommand=poeCommandResult.pending_command||'';
+      poeSuggestedPersonId=poeCommandResult.suggested_person_id||null;
+    }else{
+      poePendingCommand='';poeSuggestedPersonId=null;
+    }
     if(poeCommandResult.status==='ok')toast(poeCommandResult.message||'Poe handled it.');
   }catch(err){poeCommandResult={status:'clarification',message:err.message};toast(err.message);}
   finally{poeCommandSubmitting=false;openDrawer(activeView.panel,activeView.id,activeView.parent);}
@@ -2616,10 +2625,18 @@ async function askCampus(){
   try{
     campusAskSubmitting=true;if(els.campusAskBtn){els.campusAskBtn.disabled=true;els.campusAskBtn.textContent='Checking…';}
     const previousAgent=agent==='auto'?(campusAskLastResult?.agent||''):'';
-    const result=await post('/api/campus/ask',{text,agent,previous_agent:previousAgent});
+    const result=await post('/api/campus/ask',{text,agent,previous_agent:previousAgent,previous_poe_command:previousAgent==='poe'?(poePendingCommand||null):null,poe_suggested_person_id:previousAgent==='poe'?poeSuggestedPersonId:null});
     renderCampusAskResponse(result,text);
     if(result.vernadette_result){vernadetteCommandResult=result.vernadette_result;if(result.vernadette_result.discovery_results)grantDiscoveryResult={provider:result.vernadette_result.provider,query:result.vernadette_result.query,hit_count:result.vernadette_result.hit_count,results:result.vernadette_result.discovery_results};}
-    if(result.poe_result)poeCommandResult=result.poe_result;
+    if(result.poe_result){
+      poeCommandResult=result.poe_result;
+      if(result.poe_result.status==='clarification'){
+        poePendingCommand=result.poe_result.pending_command||'';
+        poeSuggestedPersonId=result.poe_result.suggested_person_id||null;
+      }else{
+        poePendingCommand='';poeSuggestedPersonId=null;
+      }
+    }
     if(result.daily_steward){stellaDailyResult={status:'ok',message:result.message||'',daily_steward:result.daily_steward};}
     refreshAiStatus();
   }catch(err){renderCampusAskResponse({handled_by:'Campus',mode:'routing',message:err.message||String(err),project_created:false},text);}
@@ -2768,6 +2785,7 @@ els.drawerBody.addEventListener('click',e=>{
   else if(btn.dataset.contributionThank)updateContributionStatus(btn.dataset.contributionThank,'thank',btn.dataset.currentStatus);
   else if(btn.dataset.contributionFollow)updateContributionStatus(btn.dataset.contributionFollow,'follow',btn.dataset.currentStatus);
   else if(btn.hasAttribute('data-poe-open-report'))openPoeReportResult();
+  else if(btn.hasAttribute('data-poe-clear-pending')){poePendingCommand='';poeSuggestedPersonId=null;poeCommandResult=null;openDrawer(activeView.panel,activeView.id,activeView.parent);}
   else if(btn.dataset.poeExample){const ta=els.drawerBody.querySelector('[data-poe-command-form] textarea[name="text"]');if(ta){ta.value=btn.dataset.poeExample;ta.focus();}}
   else if(btn.dataset.vernadetteExample){const ta=els.drawerBody.querySelector('[data-vernadette-command-form] textarea[name="text"]');if(ta){ta.value=btn.dataset.vernadetteExample;ta.focus();}}
   else if(btn.dataset.workClockOut)clockOutWork(btn.dataset.workClockOut);

@@ -6567,6 +6567,95 @@ def test_v08698_poe_manual_duration_is_date_only_and_reportable(tmp_path, monkey
     assert report['sessions'][0]['local_ended_at'] == ''
 
 
+def test_v097_poe_past_tense_numeric_date_records_existing_work_session(tmp_path, monkeypatch):
+    import asyncio
+    import app as appmod
+    monkeypatch.setattr(appmod, 'DB_PATH', tmp_path / 'poe-natural-past.db')
+    appmod.init_db()
+    person = asyncio.run(appmod.api_person_create(appmod.PersonRequest(display_name='Justyn')))
+    result = asyncio.run(appmod.api_poe_command(appmod.PoeCommandRequest(text='Justyn worked 4 hours on 9.11.26 doing animal care.')))
+    assert result['status'] == 'ok'
+    assert result['intent'] == 'manual_duration'
+    with appmod.db() as conn:
+        row = conn.execute("SELECT ws.*,ac.code AS activity_code FROM work_sessions ws JOIN activity_categories ac ON ac.id=ws.activity_category_id WHERE ws.id=?", (result['session_id'],)).fetchone()
+    assert row['person_id'] == person['person_id']
+    assert row['work_date'] == '2026-09-11'
+    assert row['duration_minutes'] == 240
+    assert row['entry_mode'] == 'manual_duration'
+    assert row['activity_code'] == 'animal_care'
+
+
+def test_v097_poe_retains_past_work_while_asking_for_category(tmp_path, monkeypatch):
+    import asyncio
+    import app as appmod
+    monkeypatch.setattr(appmod, 'DB_PATH', tmp_path / 'poe-natural-followup.db')
+    appmod.init_db()
+    asyncio.run(appmod.api_person_create(appmod.PersonRequest(display_name='Justyn')))
+    first = asyncio.run(appmod.api_poe_command(appmod.PoeCommandRequest(text='Justyn worked 4 hours on 9/11/26.')))
+    assert first['status'] == 'clarification'
+    assert first['pending_command'] == 'Justyn worked 4 hours on 9/11/26.'
+    with appmod.db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM work_sessions").fetchone()[0] == 0
+    second = asyncio.run(appmod.api_poe_command(appmod.PoeCommandRequest(text='animal care', previous_command=first['pending_command'])))
+    assert second['status'] == 'ok'
+    with appmod.db() as conn:
+        row = conn.execute("SELECT * FROM work_sessions WHERE id=?", (second['session_id'],)).fetchone()
+    assert row['work_date'] == '2026-09-11'
+    assert row['duration_minutes'] == 240
+
+
+def test_v097_poe_close_name_requires_confirmation_before_write(tmp_path, monkeypatch):
+    import asyncio
+    import app as appmod
+    monkeypatch.setattr(appmod, 'DB_PATH', tmp_path / 'poe-name-confirm.db')
+    appmod.init_db()
+    person = asyncio.run(appmod.api_person_create(appmod.PersonRequest(display_name='Justyn')))
+    first = asyncio.run(appmod.api_poe_command(appmod.PoeCommandRequest(text='Justion worked 4 hours on 9.11.26 doing animal care.')))
+    assert first['status'] == 'clarification'
+    assert first['suggested_person_id'] == person['person_id']
+    assert 'Did you mean Justyn' in first['message']
+    with appmod.db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM work_sessions").fetchone()[0] == 0
+    second = asyncio.run(appmod.api_poe_command(appmod.PoeCommandRequest(text='yes', previous_command=first['pending_command'], suggested_person_id=first['suggested_person_id'])))
+    assert second['status'] == 'ok'
+    with appmod.db() as conn:
+        row = conn.execute("SELECT * FROM work_sessions WHERE id=?", (second['session_id'],)).fetchone()
+    assert row['person_id'] == person['person_id']
+
+
+def test_v097_poe_followup_context_contract_is_present_in_both_interfaces():
+    app_text = (ROOT / 'app.py').read_text(encoding='utf-8')
+    js = (ROOT / 'static/js/app.js').read_text(encoding='utf-8')
+    assert 'previous_command' in app_text
+    assert 'previous_poe_command' in app_text
+    assert 'poePendingCommand' in js
+    assert 'data-poe-clear-pending' in js
+
+
+def test_v097_ask_campus_keeps_poe_followup_from_routing_to_stewart(tmp_path, monkeypatch):
+    import asyncio
+    import app as appmod
+    monkeypatch.setattr(appmod, 'DB_PATH', tmp_path / 'poe-campus-followup.db')
+    appmod.init_db()
+    asyncio.run(appmod.api_person_create(appmod.PersonRequest(display_name='Justyn')))
+    first = asyncio.run(appmod.api_campus_ask(appmod.CampusAskRequest(text='Justyn worked 4 hours on 9/11/26.')))
+    assert first['agent'] == 'poe'
+    assert first['status'] == 'clarification'
+    pending = first['poe_result']['pending_command']
+    second = asyncio.run(appmod.api_campus_ask(appmod.CampusAskRequest(
+        text='animal care',
+        previous_agent='poe',
+        previous_poe_command=pending,
+    )))
+    assert second['agent'] == 'poe'
+    assert second['route_source'] == 'follow_up'
+    assert second['status'] == 'ok'
+    with appmod.db() as conn:
+        row = conn.execute("SELECT * FROM work_sessions").fetchone()
+    assert row['work_date'] == '2026-09-11'
+    assert row['duration_minutes'] == 240
+
+
 def test_v08698_poe_report_command_uses_primary_and_filters(tmp_path, monkeypatch):
     import asyncio
     import app as appmod

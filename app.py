@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+from difflib import SequenceMatcher
 import io
 import hashlib
 import json
@@ -4988,6 +4989,34 @@ def _poe_resolve_person(conn: sqlite3.Connection, command: str, *, allow_all: bo
     return None, "I couldn't match a person in the People Ledger. Add them first, or use their recorded name in the command."
 
 
+def _poe_suggest_person(conn: sqlite3.Connection, command: str) -> sqlite3.Row | None:
+    """Suggest one close Person name for confirmation without auto-selecting it."""
+    command_words = [word for word in _poe_normalize(command).split() if len(word) >= 3]
+    if not command_words:
+        return None
+    candidates: list[tuple[float, sqlite3.Row]] = []
+    people = conn.execute(
+        "SELECT * FROM people WHERE status='Active' AND entity_kind='Person' ORDER BY display_name COLLATE NOCASE"
+    ).fetchall()
+    for person in people:
+        name_words = _poe_normalize(person["display_name"]).split()
+        if not name_words:
+            continue
+        score = max(
+            SequenceMatcher(None, name_word, command_word).ratio()
+            for name_word in name_words
+            for command_word in command_words
+        )
+        if score >= 0.72:
+            candidates.append((score, person))
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    if not candidates:
+        return None
+    if len(candidates) > 1 and candidates[0][0] - candidates[1][0] < 0.08:
+        return None
+    return candidates[0][1]
+
+
 def _poe_resolve_activity(conn: sqlite3.Connection, command: str) -> sqlite3.Row | None:
     norm = _poe_normalize(command)
     categories = {row["code"]: row for row in conn.execute("SELECT * FROM activity_categories WHERE active=1").fetchall()}
@@ -5102,6 +5131,15 @@ def _poe_single_work_date(command: str, today: date) -> date:
             return date.fromisoformat(iso_match.group(1))
         except ValueError:
             pass
+    numeric_match = re.search(r"(?<!\d)(\d{1,2})[./](\d{1,2})[./](\d{2}|\d{4})(?!\d)", command)
+    if numeric_match:
+        month, day, year = (int(value) for value in numeric_match.groups())
+        if year < 100:
+            year += 2000
+        try:
+            return date(year, month, day)
+        except ValueError:
+            pass
     for label, month in POE_MONTHS.items():
         match = re.search(rf"\b{re.escape(label)}\s+(\d{{1,2}})(?:\s*,?\s*(20\d{{2}}))?\b", norm)
         if match:
@@ -5167,9 +5205,15 @@ def _poe_command_kind(command: str) -> str:
         return "clock_out"
     if re.search(r"\bclock\b.*\bin\b", norm) or norm.startswith("clock in"):
         return "clock_in"
-    if re.search(r"\b(add|record|log)\b", norm) and _poe_duration_minutes(command):
+    if any(phrase in norm for phrase in ("how many", "how much time", "show me", "hour total", "work report", "total time", "report")):
+        return "report"
+    if _poe_duration_minutes(command) and (
+        re.search(r"\b(add|record|log)\b", norm)
+        or re.search(r"\b(worked|volunteered|helped)\b", norm)
+        or re.search(r"\bdid\b.*\b(hours?|hrs?|minutes?|mins?)\b", norm)
+    ):
         return "manual_duration"
-    if any(phrase in norm for phrase in ("how many", "how much time", "show me", "hours", "hour total", "work report", "total time", "report")):
+    if "hours" in norm:
         return "report"
     return "unknown"
 
@@ -7449,6 +7493,8 @@ class ContributionReceivedUpdateRequest(BaseModel):
 
 class PoeCommandRequest(BaseModel):
     text: str
+    previous_command: str | None = None
+    suggested_person_id: int | None = None
 
 
 class VernadetteCommandRequest(BaseModel):
@@ -7463,6 +7509,8 @@ class CampusAskRequest(BaseModel):
     text: str
     agent: str = "auto"
     previous_agent: str | None = None
+    previous_poe_command: str | None = None
+    poe_suggested_person_id: int | None = None
 
 
 class GrantDiscoveryRequest(BaseModel):
@@ -7866,7 +7914,9 @@ async def api_campus_ask(req: CampusAskRequest) -> dict[str, Any]:
     if not text: raise HTTPException(status_code=400,detail="Ask the Campus a question or request first.")
     selected=CAMPUS_AGENT_ALIASES.get(str(req.agent or "auto").strip().casefold())
     if selected is None: raise HTTPException(status_code=400,detail="Choose Auto, Stella, Percy, Rose, Stewart, Vernadette, or Poe.")
-    if selected == "auto":
+    if selected == "auto" and req.previous_poe_command and CAMPUS_AGENT_ALIASES.get(str(req.previous_agent or "").strip().casefold()) == "poe":
+        routed, route_reason, route_source = "poe", "Poe is holding an incomplete work-hours entry and needs this reply.", "follow_up"
+    elif selected == "auto":
         routed, route_reason, route_source = _campus_auto_route_detail(text, req.previous_agent)
     else:
         routed, route_reason, route_source = selected, f"You chose {CAMPUS_AGENT_LABELS[selected].split(' · ')[0]} directly.", "selected"
@@ -7891,7 +7941,7 @@ async def api_campus_ask(req: CampusAskRequest) -> dict[str, Any]:
         return {"status":"ok","mode":"deterministic","handled_by":CAMPUS_AGENT_LABELS['stewart'],"agent":"stewart","message":answer['message'],"open_panel":"environment","open_label":"Weather & Seasons","project_created":False,"additional_ai_calls":0,"route_reason":route_reason,"route_source":route_source}
 
     if routed=="poe":
-        result=await api_poe_command(PoeCommandRequest(text=text))
+        result=await api_poe_command(PoeCommandRequest(text=text,previous_command=req.previous_poe_command,suggested_person_id=req.poe_suggested_person_id))
         return {"status":result.get('status','ok'),"mode":"deterministic","handled_by":CAMPUS_AGENT_LABELS['poe'],"agent":"poe","message":result.get('message','Poe handled the request.'),"poe_result":result,"open_panel":"people" if result.get('report_filters') else None,"open_label":"People & Work","project_created":False,"additional_ai_calls":0,"route_reason":route_reason,"route_source":route_source}
 
     if routed=="vernadette":
@@ -8506,9 +8556,25 @@ async def api_contribution_received_update(contribution_id: int, req: Contributi
 
 @app.post("/api/poe/command")
 async def api_poe_command(req: PoeCommandRequest) -> dict[str, Any]:
-    command = _poe_clean_command(req.text)
-    if not command:
+    incoming = _poe_clean_command(req.text)
+    if not incoming:
         raise HTTPException(status_code=400, detail="Tell Poe what you want to do.")
+    previous = _poe_clean_command(req.previous_command or "")
+    answer = _poe_normalize(incoming)
+    confirmed_person_id: int | None = None
+    if previous and req.suggested_person_id and answer in {"yes", "yes please", "correct", "that is right", "thats right", "that s right"}:
+        command = previous
+        confirmed_person_id = int(req.suggested_person_id)
+    elif previous and req.suggested_person_id and answer in {"no", "nope", "wrong person"}:
+        return {
+            "status": "clarification", "intent": "manual_duration",
+            "message": "Okay — I did not record anything. Tell me the person's recorded name.",
+            "pending_command": previous,
+        }
+    elif previous and _poe_command_kind(incoming) == "unknown":
+        command = f"{previous} {incoming}"[:2000]
+    else:
+        command = incoming
     kind = _poe_command_kind(command)
 
     if kind == "report":
@@ -8570,18 +8636,37 @@ async def api_poe_command(req: PoeCommandRequest) -> dict[str, Any]:
 
     if kind == "manual_duration":
         with db() as conn:
-            person, error = _poe_resolve_person(conn, command)
+            person = None
+            error = None
+            if confirmed_person_id is not None:
+                person = conn.execute(
+                    "SELECT * FROM people WHERE id=? AND status='Active' AND entity_kind='Person'",
+                    (confirmed_person_id,),
+                ).fetchone()
+                if not person:
+                    error = "That suggested person is no longer an active Person record. Tell me the recorded name."
+            else:
+                person, error = _poe_resolve_person(conn, command)
             if error or not person:
-                return {"status": "clarification", "intent": kind, "message": error or "Whose hours should I record?"}
+                suggestion = _poe_suggest_person(conn, command)
+                if suggestion:
+                    return {
+                        "status": "clarification", "intent": kind,
+                        "message": f"Did you mean {suggestion['display_name']}? I won't record anything until you confirm.",
+                        "pending_command": command,
+                        "suggested_person_id": int(suggestion["id"]),
+                    }
+                return {"status": "clarification", "intent": kind, "message": error or "Whose hours should I record?", "pending_command": command}
             activity = _poe_resolve_activity(conn, command)
             if not activity:
                 return {
                     "status": "clarification", "intent": kind,
-                    "message": "I found the duration, but I still need the work category before I save it.",
+                    "message": f"I have {person['display_name']} for {_poe_duration_label(_poe_duration_minutes(command) or 0)}. What kind of work was it?",
+                    "pending_command": command,
                 }
             duration = _poe_duration_minutes(command)
             if not duration:
-                return {"status": "clarification", "intent": kind, "message": "How much time should I record?"}
+                return {"status": "clarification", "intent": kind, "message": "How much time should I record?", "pending_command": command}
             today = _poe_local_today(conn)
             work_day = _poe_single_work_date(command, today)
             if work_day > today:
