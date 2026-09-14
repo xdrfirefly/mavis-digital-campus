@@ -53,7 +53,7 @@ def search_grants_gov(keyword: str, rows: int = 20, *, timeout: int = DEFAULT_TI
         headers={
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "Mavis-Digital-Campus/0.8.7.3.2",
+            "User-Agent": "Mavis-Digital-Campus/0.9.7",
         },
         method="POST",
     )

@@ -35,7 +35,7 @@ class OpenAIProvider:
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
-                "User-Agent": "Mavis-Digital-Campus/0.7.5.1",
+                "User-Agent": "Mavis-Digital-Campus/0.9.7",
             },
         )
 

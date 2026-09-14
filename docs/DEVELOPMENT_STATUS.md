@@ -6,6 +6,7 @@ Audit scope: repository contents as inspected on 2026-09-07. This document does 
 
 - FastAPI/SQLite campus application with static campus-map UI, canonical assets, WebSocket refreshes, and seeded buildings/agents.
 - Projects, tasks, approvals, revision workflows, role artifacts, notes, activity log, and AI control/cost records.
+- Ask Campus deterministically answers narrowly matched personal calendar questions for today, tomorrow, the next seven days, and named weekdays. Future focus uses the existing target-date-aware Daily Steward, makes no writes or AI calls, and calendar event content is excluded from external AI prompts.
 - Stella Daily Steward and Ask the Campus routing, including deterministic local paths and optional role AI advice.
 - Daily Steward's Library Class Commitment Spine uses scheduled, explicitly project-linked events in a 14-day look-ahead to support that active project's existing next task. The bounded date boost is 18 points at 0–3 days, 12 at 4–7 days, and 6 at 8–14 days; it remains below human-gate and blocker precedence, creates no work, and does not assume that a task is preparation.
 - Trusted Library intake, human cataloging, local text extraction/indexing, collections, playbooks, and institutional-memory records.

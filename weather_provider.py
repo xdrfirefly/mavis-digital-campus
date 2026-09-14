@@ -13,7 +13,7 @@ from ai.config import combined_environment
 
 WU_CURRENT_URL = "https://api.weather.com/v2/pws/observations/current"
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
-USER_AGENT = "MavisDigitalCampus/0.8.6.9 (nonprofit planning weather client)"
+USER_AGENT = "MavisDigitalCampus/0.9.7 (nonprofit planning weather client)"
 
 
 def _api_key() -> str:

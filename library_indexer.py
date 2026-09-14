@@ -178,7 +178,7 @@ def extract_library_text(path: Path, *, original_filename: str = "", mime_type: 
             method = "plain-text"
             text = _clean_text(path.read_text(encoding="utf-8", errors="replace"))
         else:
-            return {"status": "unsupported", "method": method, "text": "", "char_count": 0, "error": "This file type is not text-indexable in v0.8.6.7."}
+            return {"status": "unsupported", "method": method, "text": "", "char_count": 0, "error": "This file type is not text-indexable."}
     except (OSError, zipfile.BadZipFile, RuntimeError, ValueError, KeyError) as exc:
         return {"status": "error", "method": method, "text": "", "char_count": 0, "error": str(exc)[:500]}
     except Exception as exc:

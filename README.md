@@ -1,8 +1,8 @@
-# Mavis Digital Campus v0.9.3 — Phenology Multi-Year Comparison
+# Mavis Digital Campus v0.9.7 — Community Contribution Ledger + Google Calendar
 
-## v0.9.3 focus
+## v0.9.7 focus
 
-This is a small polish patch built directly on the working **v0.8.7.4** baseline. It changes only two user-facing behaviors: the Campus staff feel alive again while idle, and Ask the Campus keeps a clearer newest-first conversation history.
+Mavis Digital Campus v0.9.7 combines the current local institutional-support system: project and approval workflows, People and Work Hours, the privacy-bounded Community Contribution Ledger, trusted Library and institutional memory, Weather & Seasons, grants, the internal Campus Calendar, and deterministic Daily Steward planning. Google Calendar v1 adds manual, read-only primary-calendar synchronization into the existing event model; Ask Campus can answer narrowly matched local calendar and future-focus questions without sending event content to an external AI provider.
 
 ### Ambient staff movement
 
@@ -23,7 +23,7 @@ This is a small polish patch built directly on the working **v0.8.7.4** baseline
 - New answers reset the response panel to the top so the newest answer is immediately visible.
 - Clear conversation still removes the full current-session thread.
 
-No project, People, work-hour, grant, calendar, Library, weather, or institutional-memory data model changes were made in this patch.
+Existing human gates, contribution privacy, trusted-Library boundaries, deterministic planning rules, and local-operator access assumptions remain authoritative.
 
 ### Google Calendar v1
 
@@ -35,14 +35,14 @@ This release searches **Grants.gov only** for Vernadette's live grant discovery.
 
 The existing **Weather & Seasons** system remains unchanged: personal-weather-station data can be used when authorized, with the regional forecast fallback retained.
 
-Target schema: **0.9.3**.
+Target schema: **0.9.7**.
 
 ## Upgrade
 
-1. Extract v0.9.3 into a new folder.
+1. Extract v0.9.7 into a new folder.
 2. Run `IMPORT DATA FROM PREVIOUS VERSION.bat`.
-3. Point it at your working **v0.8.7.4** folder.
-4. Start v0.9.3 normally.
+3. Point it at your working **v0.9.3** folder.
+4. Start v0.9.7 normally.
 5. Leave the Campus map open for a minute or two; available staff should occasionally move gently around their home area.
 6. Ask two or three questions. The newest exchange should stay at the top; scroll down inside the response panel to see older ones.
 

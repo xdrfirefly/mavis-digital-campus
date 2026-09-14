@@ -14,6 +14,29 @@ LIVE_SHELL_LABEL = f"{LIVE_BUILD} · Community Contribution Ledger"
 LIVE_CACHE_KEY = "098"
 
 
+def test_active_release_surfaces_align_with_schema_version():
+    import json
+    version = campus.SCHEMA_VERSION
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    current_readme = readme.split("# Historical baseline:", 1)[0]
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    launcher = (ROOT / "run_windows.bat").read_text(encoding="utf-8")
+    index = (ROOT / "static/index.html").read_text(encoding="utf-8")
+    manifest = json.loads((ROOT / "static/assets/asset-manifest.json").read_text(encoding="utf-8"))
+    assert current_readme.startswith(f"# Mavis Digital Campus v{version}")
+    assert f"## v{version} focus" in current_readme and f"Target schema: **{version}**" in current_readme
+    assert f"Extract v{version}" in current_readme and f"Start v{version} normally" in current_readme
+    assert env_example.startswith(f"# Mavis Digital Campus v{version}")
+    assert f"title Mavis Digital Campus v{version}" in launcher and f"MAVIS DIGITAL CAMPUS v{version}" in launcher
+    assert f"?v={LIVE_CACHE_KEY}" in launcher
+    assert f"<title>Mavis Digital Campus v{version}</title>" in index
+    assert manifest["build"] == f"v{version}" and manifest["version"] == version
+    assert manifest["ai_runtime"]["stabilization_recovery"]["schema_version"] == version
+    for relative in ("ai/gemini_provider.py", "ai/openai_provider.py", "grant_provider.py", "weather_provider.py"):
+        assert f"/{version}" in (ROOT / relative).read_text(encoding="utf-8")
+    assert "# Historical baseline: v0.8.6.9.5" in readme and "## v0.8.7.4.2" in readme
+
+
 def test_seed_state_and_executive_summary():
     original = campus.DB_PATH
     try:
@@ -583,7 +606,7 @@ def test_v072_simulated_task_result_is_explicit():
                 task = conn.execute("SELECT * FROM tasks WHERE id=?", (int(cur.lastrowid),)).fetchone()
 
             result = campus.simulated_task_result(task)
-            assert "v0.8.7.4.2 simulated execution" in result
+            assert f"v{campus.SCHEMA_VERSION} simulated execution" in result
             assert "Stewart — Land Steward" in result
             assert "No specialist AI call" in result
             assert "external action" in result
@@ -7596,6 +7619,134 @@ def test_v08742_campus_ask_daily_and_weather_are_local(tmp_path, monkeypatch):
     assert weather["mode"] == "deterministic"
     assert weather["additional_ai_calls"] == 0
     assert weather["open_panel"] == "environment"
+
+
+def test_campus_calendar_intent_is_narrow_and_resolves_supported_targets():
+    should_match = [
+        "What do I have tomorrow?", "What is on my calendar today?", "What should my focus be tomorrow?",
+        "Do I have any meetings Tuesday?", "What's happening this week?", "What's my schedule Friday?",
+        "Anything going on tomorrow?",
+    ]
+    should_not_match = [
+        "How should I run better meetings?", "What is a project schedule?", "Tell me about calendar design.",
+        "What should our event strategy be?",
+    ]
+    assert all(campus._campus_calendar_intent(text) for text in should_match)
+    assert not any(campus._campus_calendar_intent(text) for text in should_not_match)
+    monday = campus.date(2026, 9, 14)
+    assert campus._campus_calendar_target("tomorrow", monday)["date"] == campus.date(2026, 9, 15)
+    assert campus._campus_calendar_target("Tuesday", monday)["date"] == campus.date(2026, 9, 15)
+    week = campus._campus_calendar_target("this week", monday)
+    assert (week["start"], week["end"]) == (monday, campus.date(2026, 9, 20))
+
+
+def test_campus_calendar_answers_are_local_mixed_source_and_cancel_safe(tmp_path, monkeypatch):
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "ask-calendar.db")
+    campus.init_db()
+    async def unexpected_ai(*_args, **_kwargs):
+        raise AssertionError("Recognized calendar requests must not call AI.")
+    monkeypatch.setattr(campus, "_campus_ai_advice", unexpected_ai)
+    with campus.db() as conn:
+        today = campus.date.fromisoformat(campus.environment_summary(conn)["local_date"])
+        tomorrow = today + campus.timedelta(days=1)
+        now = campus.utc_now()
+        project_id = conn.execute("INSERT INTO projects(title,status,created_at,updated_at) VALUES('Calendar Project','Active',?,?)", (now,now)).lastrowid
+        common = (tomorrow.isoformat(), now, now)
+        conn.execute("""INSERT INTO events(title,event_date,start_time,end_time,all_day,location,event_type,commitment_level,project_id,notes,status,created_by,created_at,updated_at,source)
+            VALUES('Manual planning',?,'09:00','10:00',0,'Mavis Manor','Meeting','Normal',?,'local note','Scheduled','Human',?,?,'campus')""", (tomorrow.isoformat(),project_id,now,now))
+        conn.execute("""INSERT INTO events(title,event_date,start_time,end_time,all_day,location,event_type,commitment_level,notes,status,created_by,created_at,updated_at,source,external_calendar_id,external_event_id)
+            VALUES('Google appointment',?,'14:00','15:00',0,'Library of Mavis','Personal','Major','','Scheduled','Google Calendar',?,?,'google_calendar','primary','g-ask')""", common)
+        conn.execute("""INSERT INTO events(title,event_date,all_day,location,event_type,commitment_level,notes,status,created_by,created_at,updated_at,source)
+            VALUES('Cancelled item',?,1,'Pond','Other','Normal','','Cancelled','Human',?,?,'campus')""", common)
+        before = {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in ("events","projects","tasks","ai_calls","activity_log","community_contributions","contribution_offers","library_materials")}
+    result = asyncio.run(campus.api_campus_ask(campus.CampusAskRequest(text="What do I have tomorrow?", agent="percy")))
+    assert result["mode"] == "deterministic" and result["agent"] == "stella" and result["additional_ai_calls"] == 0
+    assert result["route_source"] == "calendar_intent" and result["open_panel"] == "calendar"
+    assert tomorrow.isoformat() not in result["message"]  # human-readable exact date is used
+    assert str(tomorrow.year) in result["message"] and str(tomorrow.day) in result["message"]
+    assert {x["title"] for x in result["calendar_events"]} == {"Manual planning","Google appointment"}
+    assert all(text in result["message"] for text in ("09:00", "Mavis Manor", "Meeting", "Normal commitment", "Calendar Project", "14:00", "Library of Mavis", "Personal", "Major commitment"))
+    named = asyncio.run(campus.api_campus_ask(campus.CampusAskRequest(text=f"Do I have any meetings {tomorrow.strftime('%A')}?")))
+    assert named["resolved_time"] == campus._campus_calendar_date_label(tomorrow)
+    assert campus._campus_calendar_date_label(tomorrow) in named["message"]
+    week = asyncio.run(campus.api_campus_ask(campus.CampusAskRequest(text="What's happening this week?")))
+    assert "the next seven days" in week["resolved_time"] and "the next seven days" in week["message"]
+    with campus.db() as conn:
+        after = {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in before}
+    assert after == before
+    empty = asyncio.run(campus.api_campus_ask(campus.CampusAskRequest(text="Anything going on today?")))
+    assert "nothing scheduled" in empty["message"].lower() and str(today.year) in empty["message"]
+
+
+def test_tomorrow_focus_reuses_steward_pressure_without_current_session(tmp_path, monkeypatch):
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "tomorrow-focus.db")
+    campus.init_db()
+    async def unexpected_ai(*_args, **_kwargs):
+        raise AssertionError("Tomorrow focus must remain deterministic.")
+    monkeypatch.setattr(campus, "_campus_ai_advice", unexpected_ai)
+    with campus.db() as conn:
+        today = campus.date.fromisoformat(campus.environment_summary(conn)["local_date"])
+        tomorrow = today + campus.timedelta(days=1)
+        now = campus.utc_now()
+        person_id = conn.execute("INSERT INTO people(display_name,person_type,status,is_primary_user,created_at,updated_at) VALUES('Primary Person','Staff','Active',1,?,?)", (now,now)).lastrowid
+        conn.execute("INSERT INTO work_sessions(person_id,participation_type,started_at,notes,created_by,created_at,updated_at) VALUES(?,'Volunteer',?,'Current work','Poe',?,?)", (person_id,now,now,now))
+        project_id = conn.execute("INSERT INTO projects(title,status,created_at,updated_at) VALUES('Tomorrow Project','Active',?,?)", (now,now)).lastrowid
+        conn.execute("INSERT INTO tasks(project_id,title,owner_agent_id,status,sequence,brief,created_at,updated_at) VALUES(?,'Prepare locally','programs','Waiting',1,'',?,?)", (project_id,now,now))
+        for index in range(2):
+            conn.execute("INSERT INTO events(title,event_date,all_day,location,event_type,commitment_level,project_id,notes,status,created_by,created_at,updated_at) VALUES(?,?,1,'Library','Meeting','Major',?,'','Scheduled','Human',?,?)", (f"Tomorrow commitment {index+1}",tomorrow.isoformat(),project_id,now,now))
+    result = asyncio.run(campus.api_campus_ask(campus.CampusAskRequest(text="What should my focus be tomorrow?")))
+    steward = result["daily_steward"]
+    assert result["mode"] == "deterministic" and result["additional_ai_calls"] == 0
+    assert steward["local_date"] == tomorrow.isoformat() and steward["focus_cap"] == 1
+    assert steward["calendar_pressure"] == {"today_count":2,"major_today_count":2}
+    assert all(item.get("kind") != "continue_session" for item in steward["focus"])
+
+
+def test_tomorrow_focus_surfaces_steward_recommendation_and_calendar_commitment(tmp_path, monkeypatch):
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "tomorrow-focus-message.db")
+    campus.init_db()
+    async def unexpected_ai(*_args, **_kwargs):
+        raise AssertionError("Tomorrow focus must remain deterministic.")
+    monkeypatch.setattr(campus, "_campus_ai_advice", unexpected_ai)
+    with campus.db() as conn:
+        today = campus.date.fromisoformat(campus.environment_summary(conn)["local_date"])
+        tomorrow = today + campus.timedelta(days=1)
+        now = campus.utc_now()
+        conn.execute("""INSERT INTO events(title,event_date,start_time,end_time,all_day,location,event_type,commitment_level,notes,status,created_by,created_at,updated_at,source)
+            VALUES('Saving Documents',?,'17:00','18:00',0,'Craft Memorial Library','Class / Program','Normal','','Scheduled','Human',?,?,'campus')""", (tomorrow.isoformat(),now,now))
+    result = asyncio.run(campus.api_campus_ask(campus.CampusAskRequest(text="What should my focus be tomorrow?")))
+    assert result["mode"] == "deterministic" and result["additional_ai_calls"] == 0
+    assert "Saving Documents" in result["message"] and "17:00" in result["message"] and "18:00" in result["message"]
+    assert "Craft Memorial Library" in result["message"]
+    assert result["daily_steward"]["focus"][0]["title"] in result["message"]
+
+
+def test_future_steward_keeps_human_gate_and_blocker_precedence(tmp_path, monkeypatch):
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "future-precedence.db")
+    campus.init_db()
+    with campus.db() as conn:
+        today = campus.date.fromisoformat(campus.environment_summary(conn)["local_date"])
+        target = today + campus.timedelta(days=2)
+        now = campus.utc_now()
+        project_id = conn.execute("INSERT INTO projects(title,status,created_at,updated_at) VALUES('Gated Project','Active',?,?)", (now,now)).lastrowid
+        conn.execute("INSERT INTO tasks(project_id,title,owner_agent_id,status,sequence,brief,created_at,updated_at) VALUES(?,'Blocked first','research','Blocked',1,'',?,?)", (project_id,now,now))
+        conn.execute("INSERT INTO tasks(project_id,title,owner_agent_id,status,sequence,brief,created_at,updated_at) VALUES(?,'Calendar-supported task','programs','Waiting',2,'',?,?)", (project_id,now,now))
+        conn.execute("INSERT INTO approvals(project_id,title,summary,status,created_at,updated_at) VALUES(?,'Human decision','Review','Pending',?,?)", (project_id,now,now))
+        conn.execute("INSERT INTO events(title,event_date,all_day,location,event_type,commitment_level,project_id,notes,status,created_by,created_at,updated_at) VALUES('Linked commitment',?,1,'Library','Meeting','Normal',?,'','Scheduled','Human',?,?)", (target.isoformat(),project_id,now,now))
+        steward = campus.daily_steward(conn, target)
+    assert steward["focus"][0]["kind"] == "decision" and steward["focus"][0]["title"] == "Human decision"
+
+
+def test_external_advisor_prompts_exclude_all_calendar_content(tmp_path, monkeypatch):
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "prompt-calendar-privacy.db")
+    campus.init_db()
+    sentinels = ("PRIVATE EVENT TITLE 8675309", "PRIVATE LOCATION 8675309", "PRIVATE CALENDAR NOTE 8675309")
+    with campus.db() as conn:
+        today = campus.environment_summary(conn)["local_date"]
+        now = campus.utc_now()
+        conn.execute("INSERT INTO events(title,event_date,start_time,end_time,all_day,location,event_type,commitment_level,notes,status,created_by,created_at,updated_at,source,external_calendar_id,external_event_id) VALUES(?,?,'10:00','11:00',0,?,'Class / Program','Major',?,'Scheduled','Google Calendar',?,?,'google_calendar','primary','private-prompt-event')", (sentinels[0],today,sentinels[1],sentinels[2],now,now))
+        prompts = [campus._campus_advisor_prompt(agent, "Give ordinary advice", conn) for agent in ("stella","percy","rose","stewart")]
+    assert all(sentinel not in prompt for prompt in prompts for sentinel in sentinels)
 
 
 def test_v097_rose_library_inventory_confirms_empty_without_ai_or_writes(tmp_path, monkeypatch):

@@ -3170,7 +3170,7 @@ def materialize_caretaker_deliverables(
 {result}
 
 ---
-This v0.8.7 Caretaker output is assembled from the current simulated Caretaker task result. It is not yet a real Caretaker AI artifact.
+This Caretaker output is assembled from the current simulated Caretaker task result. It is not yet a real Caretaker AI artifact.
 """
     return [
         upsert_deliverable(
@@ -4046,9 +4046,9 @@ def playbooks_for_prompt(
     ]
 
 
-def _daily_steward_forecast_context(environment: dict[str, Any]) -> dict[str, Any]:
+def _daily_steward_forecast_context(environment: dict[str, Any], target_date: date | None = None) -> dict[str, Any]:
     """Reduce stored weather into planning signals without pretending to know farm conditions we do not have."""
-    today = str(environment.get("local_date") or "")
+    today = target_date.isoformat() if target_date is not None else str(environment.get("local_date") or "")
     days = list(environment.get("forecast_days") or [])
     today_row = next((d for d in days if str(d.get("forecast_date") or "") == today), None)
     tomorrow_row = None
@@ -4206,7 +4206,7 @@ def _daily_steward_commitment_boost(days_until: int) -> int:
     return 6
 
 
-def daily_steward(conn: sqlite3.Connection) -> dict[str, Any]:
+def daily_steward(conn: sqlite3.Connection, target_date: date | None = None) -> dict[str, Any]:
     """Stella's deterministic ADHD-friendly daily focus layer.
 
     v0.8.7.1 uses only information the Campus already has. Internal calendar events are
@@ -4214,8 +4214,9 @@ def daily_steward(conn: sqlite3.Connection) -> dict[str, Any]:
     or external calendar data and makes zero AI calls.
     """
     env = environment_summary(conn)
-    weather = _daily_steward_forecast_context(env)
-    local_today = date.fromisoformat(str(env.get("local_date") or date.today().isoformat()))
+    actual_local_today = date.fromisoformat(str(env.get("local_date") or date.today().isoformat()))
+    local_today = target_date or actual_local_today
+    weather = _daily_steward_forecast_context(env, local_today if target_date is not None else None)
     calendar = calendar_summary(conn, local_today)
     today_events = list(calendar.get("today") or [])
     major_today = int(calendar.get("major_today_count") or 0)
@@ -4313,7 +4314,7 @@ def daily_steward(conn: sqlite3.Connection) -> dict[str, Any]:
         WHERE ws.ended_at IS NULL AND pe.is_primary_user=1
         ORDER BY ws.started_at DESC LIMIT 1
     """).fetchone()
-    if primary_open:
+    if primary_open and local_today == actual_local_today:
         detail = str(primary_open["project_title"] or primary_open["activity_name"] or "current work")
         add(
             76, kind="continue_session", agent_id="operations", title=f"Continue {detail}",
@@ -4454,7 +4455,7 @@ def daily_steward(conn: sqlite3.Connection) -> dict[str, Any]:
 
     return {
         "generated_at": utc_now(),
-        "local_date": env.get("local_date"),
+        "local_date": local_today.isoformat(),
         "location": env.get("location_label"),
         "season": env.get("season"),
         "weather_summary": weather.get("summary"),
@@ -6010,7 +6011,7 @@ def simulated_task_result(task: sqlite3.Row) -> str:
     brief = " ".join(str(task["brief"] or task["title"]).split())
     return (
         f"Simulated — {owner}\n\n"
-        f"v0.8.7.4.2 simulated execution completed the approved workflow step: {brief[:700]} "
+        f"v{SCHEMA_VERSION} simulated execution completed the approved workflow step: {brief[:700]} "
         "This role is not AI-powered yet. No specialist AI call, web research, publication, email, "
         "purchase, submission, or external action occurred."
     )
@@ -6626,9 +6627,9 @@ async def execute_approved_plan(project_id: int, *, resume: bool = False, revisi
                 f"Resuming {'revision' if revision else 'approved'} workflow for {project['title']}. Completed tasks will not be repeated."
                 if resume
                 else (
-                    f"Human approved the selective revision plan for {project['title']}. Beginning v0.8.7.4.2 revision work while preserving unselected tasks and output versions."
+                    f"Human approved the selective revision plan for {project['title']}. Beginning v{SCHEMA_VERSION} revision work while preserving unselected tasks and output versions."
                     if revision
-                    else f"Human approved the plan for {project['title']}. Beginning v0.8.7.4.2 execution with restart-safe workflow journaling."
+                    else f"Human approved the plan for {project['title']}. Beginning v{SCHEMA_VERSION} execution with restart-safe workflow journaling."
                 )
             ),
         )
@@ -6930,7 +6931,7 @@ async def execute_approved_plan(project_id: int, *, resume: bool = False, revisi
                 await add_log(
                     "workflow",
                     owner_label,
-                    f"Started approved task: {task['title']}. This role remains simulated in v0.8.7.4.2.",
+                    f"Started approved task: {task['title']}. This role remains simulated in v{SCHEMA_VERSION}.",
                 )
                 await pause(2.0)
                 result = simulated_task_result(task)
@@ -6992,7 +6993,7 @@ async def execute_approved_plan(project_id: int, *, resume: bool = False, revisi
         await add_log(
             "review",
             "Chief of Staff",
-            "All selected work reached Completed. The Chief final review is evaluating the current v0.8.7.4.2 output package, including preserved and newly versioned deliverables.",
+            f"All selected work reached Completed. The Chief final review is evaluating the current v{SCHEMA_VERSION} output package, including preserved and newly versioned deliverables.",
         )
         await pause(1.2)
 
@@ -7030,7 +7031,7 @@ async def execute_approved_plan(project_id: int, *, resume: bool = False, revisi
             recommendation = str(review_artifact.get("approval_recommendation") or "review")
             executive_summary_text = str(
                 review_artifact.get("executive_summary")
-                or f"v0.8.7.4.2 completed {completed} of {total} approved tasks."
+                or f"v{SCHEMA_VERSION} completed {completed} of {total} approved tasks."
             )
             verification_items = review_artifact.get("verification_before_public_use") or []
             decisions = review_artifact.get("executive_decisions_needed") or []
@@ -7670,7 +7671,7 @@ async def lifespan(app: FastAPI):
             "system",
             "Campus",
             (
-                "Mavis Digital Campus v0.8.7.4.2 is online. "
+                f"Mavis Digital Campus v{SCHEMA_VERSION} is online. "
                 f"Schema {health['schema_version']} · "
                 f"{len(recovered)} interrupted workflow(s) detected · "
                 f"{approval_repairs['repaired']} approval gate(s) repaired · {repository_count} repository file(s) · {library_index_summary['indexed']} Library file(s) newly indexed."
@@ -7776,6 +7777,100 @@ def _campus_auto_route(text: str) -> str:
 def _campus_daily_intent(text: str) -> bool:
     q=text.casefold()
     return any(token in q for token in ("what should i focus", "what should i do", "focus on today", "priorities today", "priority today", "plan my day", "today's priorities", "todays priorities", "needs my attention today"))
+
+
+_CAMPUS_WEEKDAYS = {name.casefold(): index for index, name in enumerate(("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))}
+
+
+def _campus_calendar_focus_intent(text: str) -> bool:
+    q = " ".join(str(text or "").casefold().split())
+    return bool(
+        re.search(r"\bwhat should (?:i|my)\b.{0,30}\bfocus\b", q)
+        or re.search(r"\bwhat should my focus be\b", q)
+        or re.search(r"\b(?:priorities|priority|focus)\b.{0,20}\b(?:today|tomorrow|this week|next seven days|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", q)
+    )
+
+
+def _campus_calendar_target(text: str, local_today: date) -> dict[str, Any] | None:
+    q = " ".join(str(text or "").casefold().split())
+    if re.search(r"\b(this week|next seven days)\b", q):
+        return {"kind": "week", "start": local_today, "end": local_today + timedelta(days=6)}
+    if re.search(r"\btomorrow\b", q):
+        target = local_today + timedelta(days=1)
+        return {"kind": "day", "date": target}
+    if re.search(r"\btoday\b", q):
+        return {"kind": "day", "date": local_today}
+    for name, weekday in _CAMPUS_WEEKDAYS.items():
+        if re.search(rf"\b{name}\b", q):
+            target = local_today + timedelta(days=(weekday - local_today.weekday()) % 7)
+            return {"kind": "day", "date": target}
+    return None
+
+
+def _campus_calendar_intent(text: str) -> bool:
+    """Match personal schedule lookups with an explicit supported time target."""
+    q = " ".join(str(text or "").casefold().split())
+    if not re.search(r"\b(today|tomorrow|this week|next seven days|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", q):
+        return False
+    personal_lookup = bool(
+        re.search(r"\bwhat do i have\b", q)
+        or re.search(r"\bwhat(?: is|'s) on my calendar\b", q)
+        or re.search(r"\bdo i have (?:any )?(?:meetings?|events?|appointments?|anything)\b", q)
+        or re.search(r"\bwhat(?: is|'s) happening\b", q)
+        or re.search(r"\bwhat(?: is|'s) my schedule\b", q)
+        or re.search(r"\banything (?:going on|scheduled)\b", q)
+    )
+    return personal_lookup or _campus_calendar_focus_intent(text)
+
+
+def _campus_calendar_date_label(value: date) -> str:
+    return f"{value.strftime('%A, %B')} {value.day}, {value.year}"
+
+
+def _campus_focus_event_label(event: dict[str, Any]) -> str:
+    title = str(event.get("title") or "Untitled event")
+    location = str(event.get("location") or "").strip()
+    timing = _calendar_event_time_label(event)
+    detail = f"{title} ({timing})"
+    return detail + (f" at {location}" if location else "")
+
+
+def _campus_calendar_answer(conn: sqlite3.Connection, text: str) -> dict[str, Any]:
+    env = environment_summary(conn)
+    local_today = date.fromisoformat(str(env.get("local_date") or date.today().isoformat()))
+    target = _campus_calendar_target(text, local_today)
+    if target is None:
+        raise ValueError("A supported calendar date target is required.")
+    focus = _campus_calendar_focus_intent(text)
+    if target["kind"] == "week":
+        start, end = target["start"], target["end"]
+        summary = calendar_summary(conn, start)
+        events = list(summary.get("this_week") or [])
+        resolved = f"the next seven days, {_campus_calendar_date_label(start)} through {_campus_calendar_date_label(end)}"
+        focus_date = start
+    else:
+        focus_date = target["date"]
+        summary = calendar_summary(conn, focus_date)
+        events = list(summary.get("today") or [])
+        resolved = _campus_calendar_date_label(focus_date)
+    if focus:
+        steward = daily_steward(conn, focus_date)
+        if events:
+            schedule = "Calendar: " + "; ".join(_campus_focus_event_label(event) for event in events) + "."
+        else:
+            schedule = "Calendar: nothing scheduled."
+        priorities = "; ".join(str(item.get("title") or "").strip() for item in steward.get("focus") or [] if str(item.get("title") or "").strip())
+        message = f"For {resolved}, {schedule}\n\nFocus: {priorities or 'Keep the day intentionally light'}.\n{steward.get('protect_attention') or ''}".strip()
+        return {"message": message, "events": events, "resolved": resolved, "daily_steward": steward, "open_panel": "briefing", "open_label": "Daily Steward"}
+    if not events:
+        message = f"You have nothing scheduled in the Campus calendar for {resolved}."
+    else:
+        details = []
+        for event in events:
+            extra = [str(event.get("location") or "").strip(), str(event.get("event_type") or "Event"), f"{event.get('commitment_level') or 'Normal'} commitment", str(event.get("project_title") or "").strip()]
+            details.append(f"{event.get('title') or 'Untitled event'} at {_calendar_event_time_label(event)}" + " Â· " + " Â· ".join(x for x in extra if x))
+        message = f"For {resolved}, you have: " + "; ".join(details) + "."
+    return {"message": message, "events": events, "resolved": resolved, "open_panel": "calendar", "open_label": "Calendar"}
 
 
 def _stella_seasonal_context_answer(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -7906,9 +8001,6 @@ def _campus_advisor_prompt(agent: str, question: str, conn: sqlite3.Connection) 
             )
     if agent=="stella":
         d=daily_steward(conn); context.append("Today focus currently generated by Daily Steward: "+"; ".join(str(x.get('title') or '') for x in (d.get('focus') or [])[:3]))
-    if agent=="percy":
-        cal=calendar_summary(conn); upcoming=[x for x in cal.get('upcoming',[]) if x.get('event_type') in {'Class / Program','Institute'}][:5]
-        if upcoming: context.append("Upcoming program/calendar context: "+"; ".join(f"{x.get('event_date')} {x.get('title')}" for x in upcoming))
     return f"{base}\n\n{values}\n\n{limits}\n\n" + ("\n\n".join(context)+"\n\n" if context else "") + f"User question: {question}\n\nRespond as {CAMPUS_AGENT_LABELS[agent].split(' · ')[0]}."
 
 
@@ -7971,6 +8063,12 @@ async def api_campus_ask(req: CampusAskRequest) -> dict[str, Any]:
 
     if _campus_explicit_project_intent(text):
         return {"status":"project_suggestion","mode":"routing","handled_by":"Stella · Chief of Staff","agent":"stella","message":"This sounds like a real project or initiative. I have not created anything yet. If you want, Stella can turn this exact request into a proposed project plan for your approval.","suggest_project":True,"original_text":text,"project_created":False,"additional_ai_calls":0,"route_reason":"Projects are coordinated through Stella before they enter the approval workflow.","route_source":"project_guard"}
+
+    if _campus_calendar_intent(text):
+        with db() as conn: answer=_campus_calendar_answer(conn,text)
+        result={"status":"ok","mode":"deterministic","handled_by":CAMPUS_AGENT_LABELS["stella"],"agent":"stella","message":answer["message"],"calendar_events":answer["events"],"resolved_time":answer["resolved"],"open_panel":answer["open_panel"],"open_label":answer["open_label"],"project_created":False,"additional_ai_calls":0,"route_reason":"A personal schedule question with a clear time target is answered from the local Campus calendar.","route_source":"calendar_intent"}
+        if answer.get("daily_steward") is not None: result["daily_steward"]=answer["daily_steward"]
+        return result
 
     if routed=="stella" and _campus_daily_intent(text):
         with db() as conn: steward=daily_steward(conn)
@@ -9444,7 +9542,7 @@ async def api_library_inbox_upload(request: Request, filename: str = "") -> dict
     if content_length:
         try:
             if int(content_length) > MAX_LIBRARY_UPLOAD_BYTES:
-                raise HTTPException(status_code=413, detail="Library files are limited to 100 MB each in v0.8.7.4.2.")
+                raise HTTPException(status_code=413, detail="Library files are limited to 100 MB each.")
         except ValueError:
             pass
 
@@ -9460,7 +9558,7 @@ async def api_library_inbox_upload(request: Request, filename: str = "") -> dict
                     continue
                 size += len(chunk)
                 if size > MAX_LIBRARY_UPLOAD_BYTES:
-                    raise HTTPException(status_code=413, detail="Library files are limited to 100 MB each in v0.8.7.4.2.")
+                    raise HTTPException(status_code=413, detail="Library files are limited to 100 MB each.")
                 hasher.update(chunk)
                 handle.write(chunk)
         if size <= 0:
@@ -10568,7 +10666,7 @@ async def _api_chief_plan_locked(req: ProjectRequest) -> dict[str, Any]:
                     else ""
                 )
                 + f"Expected outputs: {len(plan.get('expected_deliverables', []))}. "
-                + "Approve to authorize the internal v0.8.7.4.2 workflow. Outputs will be assembled locally from agent artifacts; no external action is authorized."
+                + f"Approve to authorize the internal v{SCHEMA_VERSION} workflow. Outputs will be assembled locally from agent artifacts; no external action is authorized."
             )[:3500]
 
             conn.execute(
@@ -11614,7 +11712,7 @@ async def api_approval_decide(approval_id: int, req: ApprovalDecision) -> dict[s
                 conn,
                 "approval",
                 "Human",
-                "Stella final review approved. The v0.8.7.4.2 internal package and current output versions are accepted. "
+                f"Stella final review approved. The v{SCHEMA_VERSION} internal package and current output versions are accepted. "
                 f"Programs Auto-Archive: {archive_result.get('status', 'Skipped')} "
                 f"({archive_result.get('material_count', 0)} new trusted Library material(s)).",
             )
