@@ -403,7 +403,7 @@
     "automatic_email": false,
     "automatic_calendar": false,
     "scheduled_delivery": false,
-    "google_calendar_integration": false,
+    "google_calendar_integration": true,
     "human_authority": true
   },
   "library_foundation": {
@@ -464,7 +464,7 @@
     "programs_revision_uses_trusted_indexed_text": true
   },
   "future_planning_context": {
-    "calendar": "internal_calendar_enabled_google_deferred",
+    "calendar": "internal_calendar_with_manual_read_only_google_primary_sync",
     "local_weather": "live_pws_with_open_meteo_fallback",
     "seasonal_awareness": "local_enabled",
     "automatic_rescheduling": false,
@@ -625,7 +625,7 @@
     "endpoint": "/api/stella/daily",
     "attention_protection": true,
     "calendar_source": "Campus internal calendar",
-    "google_calendar_connected": false,
+    "google_calendar_connected": true,
     "adaptive_focus_cap": true
   },
   "calendar_foundation": {
@@ -651,7 +651,7 @@
       "Other"
     ],
     "survives_demo_reset": true,
-    "google_calendar_connected": false,
+    "google_calendar_connected": true,
     "external_actions": false,
     "automatic_rescheduling": false,
     "daily_steward_reads_calendar": true,

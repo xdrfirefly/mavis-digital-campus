@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -39,6 +39,15 @@ from agents.librarian import search_trusted_library
 from library_indexer import extract_library_text
 from weather_provider import refresh_weather as refresh_weather_provider, weather_underground_key_available
 from grant_provider import GrantDiscoveryError, search_grants_gov
+from google_calendar_provider import (
+    GoogleCalendarError,
+    begin_authorization as begin_google_calendar_authorization,
+    complete_authorization as complete_google_calendar_authorization,
+    configured as google_calendar_configured,
+    credentials as google_calendar_credentials,
+    disconnect as disconnect_google_calendar,
+    list_primary_events,
+)
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "mavis.db"
@@ -309,6 +318,15 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_events_date ON events(event_date,start_time,id);
             CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id,event_date,id);
             CREATE INDEX IF NOT EXISTS idx_events_status ON events(status,event_date,id);
+
+            CREATE TABLE IF NOT EXISTS calendar_sync_state (
+                id INTEGER PRIMARY KEY CHECK(id=1),
+                last_refresh_at TEXT,
+                last_refresh_status TEXT NOT NULL DEFAULT 'Never',
+                last_refresh_error TEXT NOT NULL DEFAULT '',
+                last_import_count INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            );
 
             CREATE TABLE IF NOT EXISTS projects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -810,6 +828,20 @@ def init_db() -> None:
             conn.execute("ALTER TABLE work_sessions ADD COLUMN entry_mode TEXT NOT NULL DEFAULT 'clock'")
         if "work_date" not in work_columns:
             conn.execute("ALTER TABLE work_sessions ADD COLUMN work_date TEXT")
+
+        # Google Calendar v1 adds source identity to the existing event model.
+        # Manual events retain the default source and all existing values.
+        event_columns = {row[1] for row in conn.execute("PRAGMA table_info(events)").fetchall()}
+        for column, ddl in {
+            "source": "TEXT NOT NULL DEFAULT 'campus'",
+            "external_calendar_id": "TEXT",
+            "external_event_id": "TEXT",
+            "external_updated_at": "TEXT",
+        }.items():
+            if column not in event_columns:
+                conn.execute(f"ALTER TABLE events ADD COLUMN {column} {ddl}")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_events_external_identity ON events(source,external_calendar_id,external_event_id)")
+        conn.execute("INSERT OR IGNORE INTO calendar_sync_state(id,updated_at) VALUES(1,?)", (utc_now(),))
 
         # v0.8.7: federal grant discovery source identity. Existing manual
         # Grant Desk rows remain untouched; imported opportunities can be deduplicated.
@@ -4100,6 +4132,20 @@ def calendar_event_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """)
 
 
+def google_calendar_status(conn: sqlite3.Connection) -> dict[str, Any]:
+    row = conn.execute("SELECT * FROM calendar_sync_state WHERE id=1").fetchone()
+    client_id, _ = google_calendar_credentials()
+    connected = google_calendar_configured(DB_PATH.parent)
+    return {
+        "credentials_configured": bool(client_id),
+        "connected": connected,
+        "last_refresh_at": row["last_refresh_at"] if row else None,
+        "last_refresh_status": row["last_refresh_status"] if row else "Never",
+        "last_refresh_error": row["last_refresh_error"] if row else "",
+        "last_import_count": int(row["last_import_count"] or 0) if row else 0,
+    }
+
+
 def calendar_summary(conn: sqlite3.Connection, local_today: date | None = None) -> dict[str, Any]:
     """Build a local, deterministic view of Today / Tomorrow / This Week."""
     if local_today is None:
@@ -4116,11 +4162,13 @@ def calendar_summary(conn: sqlite3.Connection, local_today: date | None = None) 
     week_rows = [e for e in scheduled if local_today.isoformat() <= str(e.get("event_date") or "") <= week_end.isoformat()]
     upcoming = [e for e in scheduled if str(e.get("event_date") or "") >= local_today.isoformat()]
     major_today = [e for e in today_rows if str(e.get("commitment_level") or "Normal") == "Major"]
+    google_status = google_calendar_status(conn)
     return {
         "enabled": True,
         "source": "Campus internal calendar",
-        "external_connected": False,
-        "external_status": "Google Calendar not connected",
+        "external_connected": google_status["connected"],
+        "external_status": "Google Calendar connected" if google_status["connected"] else "Google Calendar not connected",
+        "google_calendar": google_status,
         "today_date": local_today.isoformat(),
         "tomorrow_date": tomorrow.isoformat(),
         "week_end_date": week_end.isoformat(),
@@ -4414,9 +4462,9 @@ def daily_steward(conn: sqlite3.Connection) -> dict[str, Any]:
         "calendar": {
             "connected": True,
             "source": "Campus internal calendar",
-            "external_connected": False,
+            "external_connected": bool(calendar.get("external_connected")),
             "status": f"{len(today_events)} event(s) today" if today_events else "No events today",
-            "detail": "Internal Campus calendar is active. Google Calendar is not connected yet.",
+            "detail": "Internal Campus calendar is active; Google events use the same deterministic planning rules.",
             "today": today_events,
             "tomorrow": calendar.get("tomorrow") or [],
             "this_week": calendar.get("this_week") or [],
@@ -4430,7 +4478,7 @@ def daily_steward(conn: sqlite3.Connection) -> dict[str, Any]:
         "calendar_pressure": {"today_count": len(today_events), "major_today_count": major_today},
         "additional_ai_calls": 0,
         "method": "deterministic_local_coordination",
-        "limitations": ["Google Calendar not connected yet", "No automatic plant/phenology records yet", "No automatic rescheduling or external actions"],
+        "limitations": ["Google Calendar refresh is manual and read-only", "No automatic plant/phenology records yet", "No automatic rescheduling or external actions"],
     }
 
 
@@ -8143,8 +8191,16 @@ async def api_event_create(req: EventRequest) -> dict[str, Any]:
 @app.post("/api/events/{event_id}")
 async def api_event_edit(event_id: int, req: EventRequest) -> dict[str, Any]:
     with db() as conn:
-        if not conn.execute("SELECT id FROM events WHERE id=?", (int(event_id),)).fetchone():
+        existing = conn.execute("SELECT * FROM events WHERE id=?", (int(event_id),)).fetchone()
+        if not existing:
             raise HTTPException(status_code=404, detail="Calendar event not found.")
+        if str(existing["source"] or "campus") == "google_calendar":
+            req = EventRequest(
+                title=existing["title"], event_date=existing["event_date"], start_time=existing["start_time"],
+                end_time=existing["end_time"], all_day=bool(existing["all_day"]), location=existing["location"],
+                status=existing["status"], event_type=req.event_type, commitment_level=req.commitment_level,
+                project_id=req.project_id, notes=req.notes,
+            )
         data = _clean_event_request(req, conn)
         now = utc_now()
         conn.execute(
@@ -8157,6 +8213,134 @@ async def api_event_edit(event_id: int, req: EventRequest) -> dict[str, Any]:
         log(conn, "calendar", "Human", f"Updated calendar event: {data['title']} · {data['event_date']} · {data['status']}.")
     await hub.broadcast()
     return {"event_id": int(event_id), "status": "updated"}
+
+
+def _normalize_google_event(item: dict[str, Any], tz: ZoneInfo) -> dict[str, Any] | None:
+    external_id = str(item.get("id") or "").strip()[:500]
+    start = item.get("start") or item.get("originalStartTime") or {}
+    if not external_id or not isinstance(start, dict):
+        return None
+    all_day = bool(start.get("date"))
+    if all_day:
+        event_date = str(start.get("date") or "")
+        start_time = end_time = None
+    else:
+        raw_start = str(start.get("dateTime") or "")
+        if not raw_start:
+            return None
+        try:
+            start_local = datetime.fromisoformat(raw_start.replace("Z", "+00:00")).astimezone(tz)
+        except ValueError:
+            return None
+        event_date = start_local.date().isoformat()
+        start_time = start_local.strftime("%H:%M")
+        end_time = None
+        raw_end = str((item.get("end") or {}).get("dateTime") or "")
+        if raw_end:
+            try:
+                end_local = datetime.fromisoformat(raw_end.replace("Z", "+00:00")).astimezone(tz)
+                if end_local.date() == start_local.date():
+                    end_time = end_local.strftime("%H:%M")
+            except ValueError:
+                pass
+    try:
+        date.fromisoformat(event_date)
+    except ValueError:
+        return None
+    return {
+        "external_event_id": external_id,
+        "title": " ".join(str(item.get("summary") or "Busy").split()).strip()[:220] or "Busy",
+        "event_date": event_date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "all_day": 1 if all_day else 0,
+        "location": " ".join(str(item.get("location") or "").split()).strip()[:300],
+        "status": "Cancelled" if str(item.get("status") or "") == "cancelled" else "Scheduled",
+        "external_updated_at": str(item.get("updated") or "")[:80] or None,
+    }
+
+
+def _store_google_calendar_refresh(conn: sqlite3.Connection, raw_items: list[dict[str, Any]], *, window_start: date, window_end: date, tz: ZoneInfo) -> int:
+    now = utc_now()
+    imported: list[dict[str, Any]] = []
+    for raw in raw_items:
+        item = _normalize_google_event(raw, tz)
+        if item and window_start.isoformat() <= item["event_date"] < window_end.isoformat():
+            imported.append(item)
+    seen = {item["external_event_id"] for item in imported}
+    for item in imported:
+        conn.execute("""
+            INSERT INTO events(title,event_date,start_time,end_time,all_day,location,event_type,commitment_level,project_id,notes,status,created_by,created_at,updated_at,source,external_calendar_id,external_event_id,external_updated_at)
+            VALUES(?,?,?,?,?,?,'Personal','Normal',NULL,'',?,'Google Calendar',?,?, 'google_calendar','primary',?,?)
+            ON CONFLICT(source,external_calendar_id,external_event_id) DO UPDATE SET
+                title=excluded.title,event_date=excluded.event_date,start_time=excluded.start_time,end_time=excluded.end_time,
+                all_day=excluded.all_day,location=excluded.location,status=excluded.status,external_updated_at=excluded.external_updated_at,updated_at=excluded.updated_at
+        """, (item["title"],item["event_date"],item["start_time"],item["end_time"],item["all_day"],item["location"],item["status"],now,now,item["external_event_id"],item["external_updated_at"]))
+    cached = conn.execute("SELECT id,external_event_id FROM events WHERE source='google_calendar' AND event_date>=? AND event_date<?", (window_start.isoformat(),window_end.isoformat())).fetchall()
+    for row in cached:
+        if str(row["external_event_id"] or "") not in seen:
+            conn.execute("UPDATE events SET status='Cancelled',updated_at=? WHERE id=?", (now,row["id"]))
+    conn.execute("UPDATE calendar_sync_state SET last_refresh_at=?,last_refresh_status='Success',last_refresh_error='',last_import_count=?,updated_at=? WHERE id=1", (now,len(imported),now))
+    return len(imported)
+
+
+@app.get("/api/calendar/google/status")
+async def api_google_calendar_status() -> dict[str, Any]:
+    with db() as conn:
+        return google_calendar_status(conn)
+
+
+@app.post("/api/calendar/google/connect")
+async def api_google_calendar_connect(request: Request) -> dict[str, str]:
+    try:
+        redirect_uri = str(request.url_for("api_google_calendar_callback"))
+        return {"authorization_url": begin_google_calendar_authorization(redirect_uri)}
+    except GoogleCalendarError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/calendar/google/callback", response_class=HTMLResponse)
+async def api_google_calendar_callback(request: Request, state: str = "", code: str = "", error: str = "") -> HTMLResponse:
+    if error or not state or not code:
+        raise HTTPException(status_code=400, detail="Google Calendar connection was cancelled or incomplete.")
+    try:
+        complete_google_calendar_authorization(DB_PATH.parent, state=state, code=code, redirect_uri=str(request.url_for("api_google_calendar_callback")))
+    except GoogleCalendarError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await hub.broadcast()
+    return HTMLResponse("<p>Google Calendar connected. <a href='/'>Return to Mavis Digital Campus</a> and choose Refresh.</p>")
+
+
+@app.post("/api/calendar/google/refresh")
+async def api_google_calendar_refresh() -> dict[str, Any]:
+    with db() as conn:
+        _, tz = _work_report_timezone(conn)
+        today = datetime.now(timezone.utc).astimezone(tz).date()
+    window_start, window_end = today - timedelta(days=30), today + timedelta(days=181)
+    time_min = datetime.combine(window_start, datetime.min.time(), tzinfo=tz).isoformat()
+    time_max = datetime.combine(window_end, datetime.min.time(), tzinfo=tz).isoformat()
+    try:
+        raw = await asyncio.to_thread(list_primary_events, DB_PATH.parent, time_min=time_min, time_max=time_max, timezone_name=getattr(tz, "key", str(tz)))
+        with db() as conn:
+            count = _store_google_calendar_refresh(conn, raw, window_start=window_start, window_end=window_end, tz=tz)
+    except GoogleCalendarError as exc:
+        with db() as conn:
+            now = utc_now()
+            conn.execute("UPDATE calendar_sync_state SET last_refresh_at=?,last_refresh_status='Failed',last_refresh_error=?,updated_at=? WHERE id=1", (now,str(exc)[:500],now))
+        await hub.broadcast()
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    await hub.broadcast()
+    return {"status": "refreshed", "imported": count, "window_start": window_start.isoformat(), "window_end_exclusive": window_end.isoformat()}
+
+
+@app.post("/api/calendar/google/disconnect")
+async def api_google_calendar_disconnect() -> dict[str, Any]:
+    disconnect_google_calendar(DB_PATH.parent)
+    with db() as conn:
+        now = utc_now()
+        conn.execute("UPDATE calendar_sync_state SET last_refresh_status='Disconnected',last_refresh_error='',updated_at=? WHERE id=1", (now,))
+    await hub.broadcast()
+    return {"status": "disconnected", "cached_events_retained": True}
 
 
 @app.get("/api/work-report")

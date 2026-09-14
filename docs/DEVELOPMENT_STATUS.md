@@ -14,6 +14,7 @@ Audit scope: repository contents as inspected on 2026-09-07. This document does 
 - People now opens to a simplified Directory with separate Work Hours and Contributions subviews. Person profiles expose a timezone-aware Monthly Participation Record derived from completed Work Sessions, a clearly labeled 80-hour monthly tracking target, streamlined audited manual Add Hours, exact person/month CSV, and a print-friendly browser record with verifier lines and an eligibility disclaimer. Organizations have no personal participation target.
 - Manual Community Contribution Ledger for Person/Organization identities, offers, received money/sponsorships, goods/materials, professional services, equipment/space, and introductions/outreach. It supports project/event links, existing follow-up tasks, completed work-session links, thank-you/follow-up status, multiple fulfillments, unknown values, and idempotent received-entry submission keys without adding ledger details to shared state, WebSockets, exports, AI context, or general logs.
 - Events/calendar foundation, local moon calculation, weather/seasonal data storage and refresh adapter.
+- Manual read-only Google Calendar v1 for the primary calendar, using the existing event model and a bounded local cache; no startup/state refresh, write-back, or incremental sync.
 - Phase 1 phenology observations with human, imported, and suggested sources; Rose review can confirm or reject suggestions without feeding planning logic.
 - Phase 2 trusted phenology history comparison across years, including optional location filtering and factual date summaries.
 - Phase 5 Seasonal Context: Rose's read-only, 45-day seasonal evidence bridge separates established observations from open checks; Stella can summarize it through Ask Campus and users can inspect the same context in Weather & Seasons → Phenology, without affecting Daily Steward or planning.
@@ -29,7 +30,7 @@ Audit scope: repository contents as inspected on 2026-09-07. This document does 
 
 ## Referenced / Planned
 
-- Google Calendar synchronization is explicitly shown as disconnected/deferred in code/tests and README history.
+- Broader Google Calendar support (multiple calendars, write-back, incremental sync, and automatic refresh) remains deferred.
 - The product canon includes Plant/Living System and Property Asset concepts; no corresponding standalone SQLite tables were found.
 - Natural-language contribution capture, automated communications, contribution exports/dashboards, and broad reporting remain deferred.
 - The supported deployment is local trusted-operator use on `127.0.0.1`. There is no authentication or authorization; personal/nonprofit permissions require a separate design before shared, volunteer-facing, LAN, or public access is expanded.

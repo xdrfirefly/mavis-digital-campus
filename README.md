@@ -25,9 +25,11 @@ This is a small polish patch built directly on the working **v0.8.7.4** baseline
 
 No project, People, work-hour, grant, calendar, Library, weather, or institutional-memory data model changes were made in this patch.
 
-### Deferred integrations retained
+### Google Calendar v1
 
-Google Calendar is **not connected yet**. The internal Campus Calendar remains active, but **Google Calendar sync** stays deferred until the local event model and Stella workload behavior are stable.
+The internal Campus Calendar can now manually connect to and refresh the authenticated user's primary Google Calendar with read-only OAuth access. Google occurrences are cached in the existing `events` table for deterministic Calendar and Daily Steward use. Refresh is never automatic; disconnect forgets authorization while retaining clearly sourced cached events.
+
+Configure a Google Desktop OAuth client in `.env` with `GOOGLE_CALENDAR_CLIENT_ID` and `GOOGLE_CALENDAR_CLIENT_SECRET`, then use Connect and Refresh in the Calendar panel. The local `.google-calendar-token.json` is ignored by Git. Google OAuth credentials and tokens are excluded from portable backups and previous-version imports, so reconnect after an upgrade.
 
 This release searches **Grants.gov only** for Vernadette's live grant discovery. Private foundations, West Virginia-specific sources, local funders, and corporate giving remain later expansions.
 
@@ -89,7 +91,7 @@ The existing local Weather & Seasons planning layer is retained unchanged.
 - Weather refresh uses network access but **zero AI calls**.
 - Weather and seasonal context remain available to deterministic Executive Briefing context.
 - Weather still cannot automatically reschedule projects, appointments, or work.
-- Google Calendar remains intentionally deferred.
+- Google Calendar refresh remains manual, read-only, primary-calendar-only, and bounded to the current planning window.
 
 ## Existing Library / Programs safeguards retained
 
@@ -111,13 +113,13 @@ The importer carries `.env`, `mavis.db`, `repository/`, and `library/` while lea
 
 ## Still deferred
 
-Google Calendar integration, automatic day/week scheduling, automatic weather-driven rescheduling, Medicaid qualification/rules mapping, automatic government submission, grant reporting rules, Vernadette's grant system, volunteer scheduling, payroll, NWS alert automation, long-term PWS history import, scanned-document OCR, and fully automatic public publishing remain intentionally deferred in v0.8.6.9.5.
+Automatic calendar refresh/write-back, automatic day/week scheduling, automatic weather-driven rescheduling, Medicaid qualification/rules mapping, automatic government submission, grant reporting rules, volunteer scheduling, payroll, NWS alert automation, long-term PWS history import, scanned-document OCR, and fully automatic public publishing remain deferred.
 
 ## Existing operational safeguards
 
 AI Activity + Cost Controls remain enabled. Role routing **does not silently transmit the work to another AI vendor** when the selected provider fails. Incoming material is **not a trusted Library item** until human Cataloging Desk approval. Incoming material **does not appear in Card Catalog search** until it is approved into the trusted Library.
 
-Google Calendar is intentionally not included in this release. **live weather access** remains isolated to the Weather subsystem; it does not grant the Librarian web access, scheduling authority, or external-action authority.
+Google Calendar read access remains isolated to the Calendar provider, and **live weather access** remains isolated to Weather & Seasons; neither grants the Librarian web access, scheduling authority, or external-action authority.
 
 Poe's conversational timekeeping is a local deterministic parser, not a new AI-delegated role. It does not broaden the Librarian's network access or authorize external action.
 

@@ -8,6 +8,7 @@ mavis.db
 .env
 .env.*
 !.env.example
+.google-calendar-token.json
 
 # Local project repository contents
 repository/*

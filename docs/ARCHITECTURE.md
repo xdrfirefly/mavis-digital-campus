@@ -51,6 +51,7 @@ No `mavis.db` was present in the audited checkout; `library/` and `repository/` 
 - `library_indexer.py` extracts text locally from supported PDF, DOCX, PPTX, and XLSX inputs.
 - `weather_provider.py` reads an optional Weather Underground key, uses a personal weather station when available, and falls back to Open-Meteo forecasts.
 - `grant_provider.py` searches the public Grants.gov Search2 API; it does not submit applications.
+- `google_calendar_provider.py` performs manual, read-only OAuth and bounded primary-calendar reads. It returns only Google-owned schedule fields and keeps access tokens in memory.
 - `upgrade_helper.py` powers the provided import/backup/restore scripts.
 
 ## Important data flows
@@ -62,6 +63,7 @@ No `mavis.db` was present in the audited checkout; `library/` and `repository/` 
 5. Ask the Campus routes some requests to deterministic local handlers; configured AI role calls are recorded in `ai_calls` and guarded by the AI controls. A narrowly matched Rose inventory request reads only titles and recorded material types for `Cataloged` materials in `Active` Library collections. A successful zero-row query is reported as no Cataloged materials in Active collections, while retrieval errors are reported separately; this path makes no AI/network calls or writes and does not receive contribution data.
 6. Daily Steward reads scheduled events explicitly linked to active projects within a 14-day look-ahead. It adds a bounded boost to that project's already-recorded next task (18 points at 0–3 days, 12 at 4–7, and 6 at 8–14), labels the task only as supporting the named dated commitment, and performs no writes. Unlinked, inactive, cancelled, completed, past, and more-distant events do not influence task priority; approvals, blockers, calendar workload limits, weather adjustments, and the three-item maximum remain authoritative.
 7. Monthly Participation Records are read-time projections over completed `work_sessions` for one Person and one calendar month in the configured Campus timezone. Date-only `manual_duration` sessions use `work_date`; normal sessions use the localized start date; open sessions are excluded. The 80-hour value is a display/reporting target for Person identities only, not an eligibility determination. Manual Add Hours uses the existing `work_sessions` table and audit trail rather than creating another hours ledger. Person/month CSV and browser printing use the same projection.
+8. Google Calendar v1 manually expands primary-calendar occurrences for a 30-day-past/180-day-future window and upserts them into `events`. Google owns schedule fields; Campus project/type/commitment/notes annotations survive refresh. State reads never call Google, disconnect retains cached events, and no attendee, organizer, description, conferencing, attachment, reminder, or response data crosses the provider boundary.
 
 The next contribution layer is intentionally deferred: natural-language capture, exports/dashboards, broader reporting, and any automated communications. Personal/nonprofit visibility and permissions require a separate design before shared access is expanded.
 
@@ -73,4 +75,4 @@ Community contribution records use the existing identity, project, event, task, 
 
 ## Configuration
 
-Environment names documented in `.env.example`: `GEMINI_API_KEY`, `GEMINI_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `CHIEF_PROVIDER`, `RESEARCH_PROVIDER`, `PROGRAMS_PROVIDER`, `CARETAKER_PROVIDER`, and `WEATHER_UNDERGROUND_API_KEY`. The weather adapter also recognizes the legacy names `WUNDERGROUND_API_KEY` and `WEATHER_COM_API_KEY` in its merged environment. Never place values in documentation or source control.
+Environment names documented in `.env.example`: `GEMINI_API_KEY`, `GEMINI_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `CHIEF_PROVIDER`, `RESEARCH_PROVIDER`, `PROGRAMS_PROVIDER`, `CARETAKER_PROVIDER`, `WEATHER_UNDERGROUND_API_KEY`, `GOOGLE_CALENDAR_CLIENT_ID`, and `GOOGLE_CALENDAR_CLIENT_SECRET`. The Google refresh token is stored separately in ignored `.google-calendar-token.json`. The token and Google OAuth credential values are excluded from portable backups and previous-version imports, so Calendar must be reconnected after an upgrade. Never place values in documentation or source control.

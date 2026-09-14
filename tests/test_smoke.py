@@ -11,7 +11,7 @@ import app as campus
 LIVE_VERSION = campus.SCHEMA_VERSION
 LIVE_BUILD = f"v{LIVE_VERSION}"
 LIVE_SHELL_LABEL = f"{LIVE_BUILD} · Community Contribution Ledger"
-LIVE_CACHE_KEY = "097"
+LIVE_CACHE_KEY = "098"
 
 
 def test_seed_state_and_executive_summary():
@@ -4788,7 +4788,7 @@ def test_v082_memory_ui_and_no_calendar_scope():
     assert 'CREATE TABLE IF NOT EXISTS institutional_memory' in app_text
     assert '@app.post("/api/memory")' in app_text
     assert '@app.post("/api/memory/{memory_id}/status")' in app_text
-    assert "Google Calendar is **not connected yet**" in readme
+    assert "Google Calendar v1" in readme
     assert '"calendar_integration_enabled": False' in app_text
 
 
@@ -4942,7 +4942,7 @@ def test_v085_playbook_ui_manifest_and_no_calendar():
     assert data['institutional_playbooks']['enabled'] is True
     assert data['institutional_playbooks']['external_action_authority'] is False
     assert data['institutional_playbooks']['google_calendar_integration'] is False
-    assert 'Google Calendar is **not connected yet**' in readme
+    assert 'Google Calendar v1' in readme
 
 
 def test_v086_executive_briefing_is_local_and_snapshots_survive_reset(tmp_path):
@@ -4989,8 +4989,8 @@ def test_v086_briefing_ui_manifest_and_no_scheduled_integrations():
     brief=data['executive_briefing']
     assert brief['additional_ai_calls']==0
     assert brief['automatic_calendar'] is False and brief['automatic_email'] is False
-    assert brief['google_calendar_integration'] is False
-    assert 'Google Calendar is **not connected yet**' in readme
+    assert brief['google_calendar_integration'] is True
+    assert 'Google Calendar v1' in readme
 
 
 def test_v0861_library_foundation_schema_is_local_durable_and_empty(tmp_path):
@@ -5074,12 +5074,12 @@ def test_v0861_manifest_and_roadmap_keep_future_integrations_deferred():
     assert lib["uploads_enabled"] is True
     assert lib["librarian_agent_enabled"] is True
     future = data["future_planning_context"]
-    assert future["calendar"] == "internal_calendar_enabled_google_deferred"
+    assert future["calendar"] == "internal_calendar_with_manual_read_only_google_primary_sync"
     assert future["local_weather"] == "live_pws_with_open_meteo_fallback"
     assert future["seasonal_awareness"] == "local_enabled"
     assert future["automatic_rescheduling"] is False
     assert "Weather & Seasons" in readme
-    assert "Google Calendar sync" in readme
+    assert "Google Calendar v1" in readme
 
 
 def test_v0865_library_catalog_crud_search_and_reset(tmp_path):
@@ -5384,7 +5384,8 @@ def test_v0865_upgrade_helper_import_backup_restore_keeps_new_code_and_excludes_
     for folder in (old, new, restore):
         folder.mkdir()
     (old / "mavis.db").write_bytes(b"old database")
-    (old / ".env").write_text("OPENAI_API_KEY=secret-test-key\n", encoding="utf-8")
+    (old / ".env").write_text("OPENAI_API_KEY=secret-test-key\nGOOGLE_CALENDAR_CLIENT_ID=google-client-secret\nGOOGLE_CALENDAR_CLIENT_SECRET=google-secret\n", encoding="utf-8")
+    (old / ".google-calendar-token.json").write_text('{"refresh_token":"google-refresh-secret"}', encoding="utf-8")
     (old / "repository").mkdir(); (old / "repository" / "project.md").write_text("project", encoding="utf-8")
     (old / "library").mkdir(); (old / "library" / "inbox").mkdir(); (old / "library" / "inbox" / "class.pdf").write_bytes(b"pdf")
     (old / "app.py").write_text("OLD APPLICATION CODE", encoding="utf-8")
@@ -5394,6 +5395,9 @@ def test_v0865_upgrade_helper_import_backup_restore_keeps_new_code_and_excludes_
     helper.import_previous(old, new)
     assert (new / "mavis.db").read_bytes() == b"old database"
     assert "secret-test-key" in (new / ".env").read_text(encoding="utf-8")
+    assert "google-client-secret" not in (new / ".env").read_text(encoding="utf-8")
+    assert "google-secret" not in (new / ".env").read_text(encoding="utf-8")
+    assert not (new / ".google-calendar-token.json").exists()
     assert (new / "repository" / "project.md").read_text(encoding="utf-8") == "project"
     assert (new / "library" / "inbox" / "class.pdf").read_bytes() == b"pdf"
     assert (new / "app.py").read_text(encoding="utf-8") == "NEW APPLICATION CODE"
@@ -5407,9 +5411,10 @@ def test_v0865_upgrade_helper_import_backup_restore_keeps_new_code_and_excludes_
         assert "library/inbox/class.pdf" in names
         assert "backup-manifest.json" in names
         assert ".env" not in names
+        assert ".google-calendar-token.json" not in names
         assert "app.py" not in names
         manifest = zf.read("backup-manifest.json").decode("utf-8")
-        assert ".env is intentionally excluded" in manifest
+        assert "Google Calendar OAuth token are intentionally excluded" in manifest
 
     helper.BACKUP_DIR = tmp_path / "restore-backups"
     (restore / "app.py").write_text("RESTORE APPLICATION CODE", encoding="utf-8")
@@ -7433,7 +7438,70 @@ def test_v08742_calendar_ui_manifest_and_cache_key():
     assert f'app.js?v={LIVE_CACHE_KEY}' in index and f'app.css?v={LIVE_CACHE_KEY}' in index and f'world.css?v={LIVE_CACHE_KEY}' in index
     assert data['calendar_foundation']['enabled'] is True
     assert data['daily_steward']['calendar_connected'] is True
-    assert data['calendar_foundation']['google_calendar_connected'] is False
+    assert data['calendar_foundation']['google_calendar_connected'] is True
+
+
+def test_google_calendar_v1_refresh_uses_existing_events_and_preserves_annotations(tmp_path, monkeypatch):
+    import app as campus
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "google-calendar.db")
+    campus.init_db()
+    raw = [{
+        "id": "google-instance-1", "status": "confirmed", "summary": "Board meeting",
+        "start": {"dateTime": "2026-09-20T14:00:00-04:00"},
+        "end": {"dateTime": "2026-09-20T15:00:00-04:00"},
+        "location": "Mavis Manor", "updated": "2026-09-14T12:00:00Z",
+        "attendees": [{"email": "private@example.com"}], "description": "private detail",
+    }]
+    tz = campus.ZoneInfo("America/New_York")
+    with campus.db() as conn:
+        assert campus._store_google_calendar_refresh(conn, raw, window_start=campus.date(2026, 8, 15), window_end=campus.date(2027, 3, 15), tz=tz) == 1
+        row = conn.execute("SELECT * FROM events WHERE external_event_id='google-instance-1'").fetchone()
+        assert row["source"] == "google_calendar" and row["event_date"] == "2026-09-20" and row["start_time"] == "14:00"
+        assert "attendee" not in row.keys() and "description" not in row.keys()
+        conn.execute("UPDATE events SET event_type='Meeting',commitment_level='Major',notes='Bring local agenda' WHERE id=?", (row["id"],))
+        changed = [{**raw[0], "summary": "Board meeting revised", "location": "Library of Mavis"}]
+        campus._store_google_calendar_refresh(conn, changed, window_start=campus.date(2026, 8, 15), window_end=campus.date(2027, 3, 15), tz=tz)
+        row = conn.execute("SELECT * FROM events WHERE id=?", (row["id"],)).fetchone()
+        assert (row["title"], row["location"]) == ("Board meeting revised", "Library of Mavis")
+        assert (row["event_type"], row["commitment_level"], row["notes"]) == ("Meeting", "Major", "Bring local agenda")
+        assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 1
+        campus._store_google_calendar_refresh(conn, [], window_start=campus.date(2026, 8, 15), window_end=campus.date(2027, 3, 15), tz=tz)
+        assert conn.execute("SELECT status FROM events WHERE id=?", (row["id"],)).fetchone()[0] == "Cancelled"
+
+
+def test_google_calendar_v1_google_owned_fields_are_backend_read_only(tmp_path, monkeypatch):
+    import asyncio
+    import app as campus
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "google-owned.db")
+    campus.init_db()
+    now = campus.utc_now()
+    with campus.db() as conn:
+        event_id = conn.execute("""INSERT INTO events(title,event_date,start_time,end_time,all_day,location,event_type,commitment_level,notes,status,created_by,created_at,updated_at,source,external_calendar_id,external_event_id)
+            VALUES('Google title','2026-09-20','10:00','11:00',0,'Google place','Personal','Normal','','Scheduled','Google Calendar',?,?,'google_calendar','primary','g1')""", (now, now)).lastrowid
+    asyncio.run(campus.api_event_edit(event_id, campus.EventRequest(title="Tampered", event_date="2027-01-01", start_time="01:00", end_time="02:00", location="Tampered", status="Cancelled", event_type="Farm", commitment_level="Major", notes="Local", project_id=None)))
+    with campus.db() as conn:
+        row = conn.execute("SELECT * FROM events WHERE id=?", (event_id,)).fetchone()
+    assert (row["title"],row["event_date"],row["start_time"],row["location"],row["status"]) == ("Google title","2026-09-20","10:00","Google place","Scheduled")
+    assert (row["event_type"],row["commitment_level"],row["notes"]) == ("Farm","Major","Local")
+
+
+def test_google_calendar_v1_token_boundary_and_ui_contract(tmp_path, monkeypatch):
+    import google_calendar_provider as provider
+    monkeypatch.setattr(provider, "combined_environment", lambda: {"GOOGLE_CALENDAR_CLIENT_ID":"client-id","GOOGLE_CALENDAR_CLIENT_SECRET":"client-secret"})
+    monkeypatch.setattr(provider, "_post_form", lambda url, values, timeout=20: {"refresh_token":"refresh-secret","access_token":"access-secret","expires_in":3600})
+    url = provider.begin_authorization("http://127.0.0.1:8000/api/calendar/google/callback")
+    from urllib.parse import parse_qs, urlparse
+    state = parse_qs(urlparse(url).query)["state"][0]
+    provider.complete_authorization(tmp_path, state=state, code="code", redirect_uri="http://127.0.0.1:8000/api/calendar/google/callback")
+    token = tmp_path / provider.TOKEN_FILENAME
+    assert token.is_file() and "refresh-secret" in token.read_text(encoding="utf-8")
+    provider.disconnect(tmp_path)
+    assert not token.exists()
+    js=(ROOT/'static/js/app.js').read_text(encoding='utf-8')
+    ignore=(ROOT/'.gitignore').read_text(encoding='utf-8')
+    helper=(ROOT/'upgrade_helper.py').read_text(encoding='utf-8')
+    assert all(x in js for x in ('data-google-calendar-connect','data-google-calendar-refresh','data-google-calendar-disconnect','Google Calendar ·'))
+    assert provider.TOKEN_FILENAME in ignore and provider.TOKEN_FILENAME in helper
 
 
 def test_v08742_cleanup_people_first_ui_and_stable_ids():
@@ -7938,7 +8006,7 @@ def test_v096_seasonal_context_transparency_ui_and_release_contract():
     css = (ROOT / "static/css/app.css").read_text(encoding="utf-8")
     manifest = json.loads((ROOT / "static/assets/asset-manifest.json").read_text(encoding="utf-8"))
     assert LIVE_VERSION == "0.9.7"
-    assert LIVE_CACHE_KEY == "097"
+    assert LIVE_CACHE_KEY == "098"
     assert "Rose’s Seasonal Briefing" in js
     assert "getJson('/api/environment/seasonal-context')" in js
     assert "Observed Now" in js and "established observations" in js

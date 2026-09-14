@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parent
 DATA_FILE = "mavis.db"
 DATA_DIRS = ("repository", "library")
 ENV_FILE = ".env"
+GOOGLE_CALENDAR_TOKEN_FILE = ".google-calendar-token.json"
+GOOGLE_CALENDAR_ENV_KEYS = ("GOOGLE_CALENDAR_CLIENT_ID", "GOOGLE_CALENDAR_CLIENT_SECRET")
 BACKUP_DIR = ROOT / "upgrade_backups"
 
 
@@ -24,8 +26,8 @@ def portable_manifest(source: Path) -> dict:
         "created_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "source_folder": str(source),
         "includes": [DATA_FILE, *DATA_DIRS],
-        "excludes": [ENV_FILE],
-        "note": ".env is intentionally excluded from backup ZIPs because it may contain API keys.",
+        "excludes": [ENV_FILE, GOOGLE_CALENDAR_TOKEN_FILE],
+        "note": ".env and the Google Calendar OAuth token are intentionally excluded from backup ZIPs because they contain secrets.",
     }
 
 
@@ -103,7 +105,11 @@ def import_previous(source: Path, target: Path = ROOT) -> None:
     shutil.copy2(source / DATA_FILE, target / DATA_FILE)
     env = source / ENV_FILE
     if env.is_file():
-        shutil.copy2(env, target / ENV_FILE)
+        # Preserve established local configuration while requiring Google OAuth
+        # credentials to be re-established deliberately after an upgrade.
+        lines = env.read_text(encoding="utf-8-sig").splitlines()
+        safe_lines = [line for line in lines if not any(line.strip().startswith(f"{key}=") for key in GOOGLE_CALENDAR_ENV_KEYS)]
+        (target / ENV_FILE).write_text("\n".join(safe_lines) + "\n", encoding="utf-8")
     for dirname in DATA_DIRS:
         src = source / dirname
         if not src.is_dir():
