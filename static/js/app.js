@@ -1,6 +1,6 @@
-// v0.9.7 — Community Contribution Ledger.
-import { worldConfig } from './world-config.js?v=098';
-import { assets, forestPlacements, worldProps } from './world-assets.js?v=098';
+// v0.9.8 — Google Drive approved-root foundation.
+import { worldConfig } from './world-config.js?v=099';
+import { assets, forestPlacements, worldProps } from './world-assets.js?v=099';
 import { createCamera } from './camera.js';
 
 const els = {
@@ -58,6 +58,9 @@ let libraryQuery = '';
 let libraryType = 'all';
 let libraryStatus = 'Active';
 let libraryEditingId = null;
+let googleDriveStatus = null;
+let googleDriveItems = [];
+let googleDriveLoading = false;
 let grantEditingId = null;
 let calendarEditingId = null;
 let grantDiscoveryResult = null;
@@ -1159,6 +1162,23 @@ function libraryUploadForm(){
     <div class="memory-form-actions"><button class="button-primary" type="submit">Add to Incoming Materials</button></div>
   </form>`;
 }
+function googleDriveFoundation(){
+  const d=googleDriveStatus;
+  if(!d)return `<section class="drawer-section"><div class="section-row"><h4>Google Drive foundation</h4><span>local boundary</span></div><p>Loading connection status...</p></section>`;
+  const status=d.connected?'Connected':(d.credentials_configured?'Not connected':'Credentials not configured');
+  const items=googleDriveItems.map(item=>`<article class="memory-card"><div class="memory-icon">${item.kind==='folder'?'D':'F'}</div><div class="memory-copy"><span class="memory-meta">${esc(item.kind)} · ${esc(item.mime_type)}</span><strong>${esc(item.name)}</strong>${item.modified_time?`<small>Modified ${esc(item.modified_time)}</small>`:''}</div></article>`).join('');
+  return `<section class="drawer-section contribution-boundary">
+    <div class="section-row"><h4>Google Drive foundation</h4><span>${esc(status)}</span></div>
+    <p>Campus access is restricted to one explicitly approved Drive root. This foundation does not download, index, upload, or send Drive content to AI providers.</p>
+    ${d.approved_root_name?`<p><strong>Approved root:</strong> ${esc(d.approved_root_name)}</p>`:''}
+    ${d.last_verification_error?`<p>${esc(d.last_verification_error)}</p>`:''}
+    <div class="memory-form-actions">
+      ${d.connected?'<button type="button" data-google-drive-verify>Verify access</button><button type="button" data-google-drive-list>List immediate contents</button><button type="button" data-google-drive-disconnect>Disconnect</button>':'<button type="button" data-google-drive-connect>Connect and select root</button>'}
+      <button type="button" data-google-drive-status>Refresh status</button>
+    </div>
+    ${items?`<div class="memory-list">${items}</div>`:''}
+  </section>`;
+}
 function drawerLibrary(){
   const all=state.library_collections||[];
   const inbox=state.library_inbox||[];
@@ -1179,6 +1199,7 @@ function drawerLibrary(){
     <p><strong>Incoming files are quarantined</strong> until human approval. The local Librarian searches only human-approved trusted Library holdings, never Incoming Materials or the greater web. <strong>v0.8.6.7 adds Local Document Indexing:</strong> The Librarian can now search text extracted locally from approved PDFs, DOCX, PPTX, XLSX, and text files; Programs can use that trusted text when revising an existing class.</p>
     <div class="memory-summary"><span><strong>${all.length}</strong> catalog records</span><span><strong>${active}</strong> active</span><span><strong>${inbox.length}</strong> incoming</span><span><strong>${materials.length}</strong> trusted materials</span><span><strong>${Number(state.library_foundation?.indexed_materials||0)}</strong> text indexed</span></div>
   </section>
+  ${googleDriveFoundation()}
   ${librarianPanel()}
   <section class="drawer-section memory-create library-intake"><div class="section-row"><h4>Incoming Materials</h4><span>Drop Box</span></div>${libraryUploadForm()}
     ${inbox.length?`<div class="memory-list library-inbox-list">${inbox.map(libraryInboxCard).join('')}</div>`:'<div class="output-empty"><strong>The Cataloging Desk is clear.</strong><span>Upload past class material here; new files stay quarantined until you approve them.</span></div>'}
@@ -1719,6 +1740,7 @@ function openDrawer(panel,id=null,parent=null){
   }
   if(panel==='environment'&&!seasonalContext&&!seasonalContextError)void loadSeasonalContext();
   if(panel==='people'&&(peopleSubview==='contributions'||personProfileId)&&!contributionLedger&&!contributionLedgerLoading)void loadContributionLedger();
+  if(panel==='library'&&!googleDriveStatus&&!googleDriveLoading)void loadGoogleDriveStatus();
 
   let kicker='Campus',title='Panel',html='';
   if(panel==='executive'){kicker='Executive';title='What Needs Me';html=drawerExecutive();}
@@ -1915,6 +1937,11 @@ function render(){
 }
 
 async function getJson(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok){let d={};try{d=await r.json();}catch{}throw new Error(d.detail||`Request failed (${r.status})`);}return r.json();}
+async function loadGoogleDriveStatus(){if(googleDriveLoading)return;googleDriveLoading=true;try{googleDriveStatus=await getJson('/api/drive/google/status');}catch(err){toast(err.message);}finally{googleDriveLoading=false;if(activeView.panel==='library'&&!els.drawer.hidden)openDrawer('library');}}
+async function connectGoogleDrive(){try{const result=await post('/api/drive/google/connect',{});window.open(result.authorization_url,'_blank','noopener');toast('Select exactly one Google Drive folder in the new browser tab, then refresh status here.');}catch(err){toast(err.message);}}
+async function verifyGoogleDrive(){try{googleDriveStatus=await post('/api/drive/google/verify',{});toast('Approved Google Drive root verified.');openDrawer('library');}catch(err){toast(err.message);await loadGoogleDriveStatus();}}
+async function listGoogleDriveRoot(){try{const result=await getJson('/api/drive/google/root-children');googleDriveItems=result.items||[];toast(`Listed ${googleDriveItems.length} immediate item(s) inside the approved root.`);openDrawer('library');}catch(err){toast(err.message);}}
+async function disconnectGoogleDrive(){if(!confirm('Disconnect Google Drive and forget the approved root?'))return;try{await post('/api/drive/google/disconnect',{});googleDriveItems=[];googleDriveStatus=null;await loadGoogleDriveStatus();toast('Google Drive disconnected; Calendar was not changed.');}catch(err){toast(err.message);}}
 async function loadSeasonalContext(force=false){
   if(seasonalContextLoading||(!force&&(seasonalContext||seasonalContextError)))return;
   seasonalContextLoading=true;seasonalContextError='';
@@ -2787,6 +2814,11 @@ els.drawerBody.addEventListener('click',e=>{
   else if(btn.hasAttribute('data-google-calendar-connect'))connectGoogleCalendar();
   else if(btn.hasAttribute('data-google-calendar-refresh'))refreshGoogleCalendar();
   else if(btn.hasAttribute('data-google-calendar-disconnect'))disconnectGoogleCalendar();
+  else if(btn.hasAttribute('data-google-drive-connect'))connectGoogleDrive();
+  else if(btn.hasAttribute('data-google-drive-verify'))verifyGoogleDrive();
+  else if(btn.hasAttribute('data-google-drive-list'))listGoogleDriveRoot();
+  else if(btn.hasAttribute('data-google-drive-disconnect'))disconnectGoogleDrive();
+  else if(btn.hasAttribute('data-google-drive-status')){googleDriveStatus=null;loadGoogleDriveStatus();}
   else if(btn.dataset.grantEdit){grantEditingId=Number(btn.dataset.grantEdit);openDrawer('grants');}
   else if(btn.hasAttribute('data-grant-edit-cancel')){grantEditingId=null;openDrawer('grants');}
   else if(btn.dataset.personPrimary)setPrimaryPerson(btn.dataset.personPrimary);

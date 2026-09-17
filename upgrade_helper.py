@@ -14,6 +14,8 @@ DATA_DIRS = ("repository", "library")
 ENV_FILE = ".env"
 GOOGLE_CALENDAR_TOKEN_FILE = ".google-calendar-token.json"
 GOOGLE_CALENDAR_ENV_KEYS = ("GOOGLE_CALENDAR_CLIENT_ID", "GOOGLE_CALENDAR_CLIENT_SECRET")
+GOOGLE_DRIVE_TOKEN_FILE = ".google-drive-token.json"
+GOOGLE_DRIVE_ENV_KEYS = ("GOOGLE_DRIVE_CLIENT_ID", "GOOGLE_DRIVE_CLIENT_SECRET")
 BACKUP_DIR = ROOT / "upgrade_backups"
 
 
@@ -26,8 +28,8 @@ def portable_manifest(source: Path) -> dict:
         "created_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "source_folder": str(source),
         "includes": [DATA_FILE, *DATA_DIRS],
-        "excludes": [ENV_FILE, GOOGLE_CALENDAR_TOKEN_FILE],
-        "note": ".env and the Google Calendar OAuth token are intentionally excluded from backup ZIPs because they contain secrets.",
+        "excludes": [ENV_FILE, GOOGLE_CALENDAR_TOKEN_FILE, GOOGLE_DRIVE_TOKEN_FILE],
+        "note": ".env and Google OAuth token files are intentionally excluded from backup ZIPs because they contain secrets.",
     }
 
 
@@ -108,7 +110,8 @@ def import_previous(source: Path, target: Path = ROOT) -> None:
         # Preserve established local configuration while requiring Google OAuth
         # credentials to be re-established deliberately after an upgrade.
         lines = env.read_text(encoding="utf-8-sig").splitlines()
-        safe_lines = [line for line in lines if not any(line.strip().startswith(f"{key}=") for key in GOOGLE_CALENDAR_ENV_KEYS)]
+        oauth_keys = (*GOOGLE_CALENDAR_ENV_KEYS, *GOOGLE_DRIVE_ENV_KEYS)
+        safe_lines = [line for line in lines if not any(line.strip().startswith(f"{key}=") for key in oauth_keys)]
         (target / ENV_FILE).write_text("\n".join(safe_lines) + "\n", encoding="utf-8")
     for dirname in DATA_DIRS:
         src = source / dirname

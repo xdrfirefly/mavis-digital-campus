@@ -10,8 +10,8 @@ import app as campus
 
 LIVE_VERSION = campus.SCHEMA_VERSION
 LIVE_BUILD = f"v{LIVE_VERSION}"
-LIVE_SHELL_LABEL = f"{LIVE_BUILD} · Community Contribution Ledger"
-LIVE_CACHE_KEY = "098"
+LIVE_SHELL_LABEL = f"{LIVE_BUILD} · Google Drive Foundation"
+LIVE_CACHE_KEY = "099"
 
 
 def test_active_release_surfaces_align_with_schema_version():
@@ -32,7 +32,7 @@ def test_active_release_surfaces_align_with_schema_version():
     assert f"<title>Mavis Digital Campus v{version}</title>" in index
     assert manifest["build"] == f"v{version}" and manifest["version"] == version
     assert manifest["ai_runtime"]["stabilization_recovery"]["schema_version"] == version
-    for relative in ("ai/gemini_provider.py", "ai/openai_provider.py", "grant_provider.py", "weather_provider.py"):
+    for relative in ("ai/gemini_provider.py", "ai/openai_provider.py", "grant_provider.py", "weather_provider.py", "google_drive_provider.py"):
         assert f"/{version}" in (ROOT / relative).read_text(encoding="utf-8")
     assert "# Historical baseline: v0.8.6.9.5" in readme and "## v0.8.7.4.2" in readme
 
@@ -5437,7 +5437,7 @@ def test_v0865_upgrade_helper_import_backup_restore_keeps_new_code_and_excludes_
         assert ".google-calendar-token.json" not in names
         assert "app.py" not in names
         manifest = zf.read("backup-manifest.json").decode("utf-8")
-        assert "Google Calendar OAuth token are intentionally excluded" in manifest
+        assert "Google OAuth token files are intentionally excluded" in manifest
 
     helper.BACKUP_DIR = tmp_path / "restore-backups"
     (restore / "app.py").write_text("RESTORE APPLICATION CODE", encoding="utf-8")
@@ -7527,6 +7527,223 @@ def test_google_calendar_v1_token_boundary_and_ui_contract(tmp_path, monkeypatch
     assert provider.TOKEN_FILENAME in ignore and provider.TOKEN_FILENAME in helper
 
 
+def test_google_drive_v098_oauth_pkce_scope_selection_and_callback_guards(tmp_path, monkeypatch):
+    import google_drive_provider as provider
+    from urllib.parse import parse_qs, urlparse
+    monkeypatch.setattr(provider, "combined_environment", lambda: {"GOOGLE_DRIVE_CLIENT_ID":"drive-client","GOOGLE_DRIVE_CLIENT_SECRET":"drive-secret"})
+    redirect = "http://127.0.0.1:8000/api/drive/google/callback"
+    url = provider.begin_authorization(redirect)
+    query = parse_qs(urlparse(url).query)
+    assert query["scope"] == [provider.SCOPE] == ["https://www.googleapis.com/auth/drive.file"]
+    assert query["trigger_onepick"] == ["true"] and query["allow_folder_selection"] == ["true"] and query["allow_multiple"] == ["false"]
+    assert query["code_challenge_method"] == ["S256"] and "code_challenge" in query
+    state = query["state"][0]
+    try:
+        provider.complete_authorization(tmp_path, state=state, code="code", redirect_uri=redirect+"/wrong", picked_file_ids="rootfolder1")
+        assert False, "redirect mismatch must fail"
+    except provider.GoogleDriveError:
+        pass
+    expired_url = provider.begin_authorization(redirect)
+    expired_state = parse_qs(urlparse(expired_url).query)["state"][0]
+    verifier, _, saved_redirect = provider._pending[expired_state]
+    provider._pending[expired_state] = (verifier, provider.time.time()-1, saved_redirect)
+    try:
+        provider.complete_authorization(tmp_path, state=expired_state, code="code", redirect_uri=redirect, picked_file_ids="rootfolder1")
+        assert False, "expired state must fail"
+    except provider.GoogleDriveError:
+        pass
+    for picked in ("", "rootfolder1,rootfolder2"):
+        selection_url = provider.begin_authorization(redirect)
+        selection_state = parse_qs(urlparse(selection_url).query)["state"][0]
+        try:
+            provider.complete_authorization(tmp_path, state=selection_state, code="code", redirect_uri=redirect, picked_file_ids=picked)
+            assert False, "missing or multiple selection must fail"
+        except provider.GoogleDriveError:
+            pass
+    try:
+        asyncio.run(campus.api_google_drive_callback(None, state="state", code="", picked_file_ids="", error="access_denied"))
+        assert False, "cancelled callback must fail"
+    except campus.HTTPException as exc:
+        assert exc.status_code == 400 and "cancelled" in exc.detail
+
+
+def test_google_drive_v098_accepts_one_folder_and_rejects_file_or_shortcut(tmp_path, monkeypatch):
+    import google_drive_provider as provider
+    from urllib.parse import parse_qs, urlparse
+    monkeypatch.setattr(provider, "combined_environment", lambda: {"GOOGLE_DRIVE_CLIENT_ID":"drive-client","GOOGLE_DRIVE_CLIENT_SECRET":"drive-secret"})
+    monkeypatch.setattr(provider, "_post_form", lambda *_args, **_kwargs: {"refresh_token":"refresh-secret","access_token":"access-secret","expires_in":3600})
+    redirect = "http://127.0.0.1:8000/api/drive/google/callback"
+    def response(url, _token, **_kwargs):
+        if "/about?" in url:
+            return {"user":{"permissionId":"account-opaque-1"}}
+        if "rootfolder1" in url:
+            return {"id":"rootfolder1","name":"Mavis Digital Campus","mimeType":provider.FOLDER_MIME_TYPE,"trashed":False,"capabilities":{"canListChildren":True}}
+        if "ordinaryfile1" in url:
+            return {"id":"ordinaryfile1","name":"Not a root","mimeType":"application/pdf","trashed":False,"capabilities":{}}
+        return {"id":"shortcut01","name":"Shortcut","mimeType":provider.SHORTCUT_MIME_TYPE,"trashed":False,"capabilities":{}}
+    monkeypatch.setattr(provider, "_get_json", response)
+    state = parse_qs(urlparse(provider.begin_authorization(redirect)).query)["state"][0]
+    binding = provider.complete_authorization(tmp_path, state=state, code="code", redirect_uri=redirect, picked_file_ids="rootfolder1")
+    assert binding == {"approved_root_id":"rootfolder1","approved_root_name":"Mavis Digital Campus","account_permission_id":"account-opaque-1"}
+    assert provider.configured(tmp_path) and "refresh-secret" in (tmp_path/provider.TOKEN_FILENAME).read_text(encoding="utf-8")
+    for selected in ("ordinaryfile1", "shortcut01"):
+        state = parse_qs(urlparse(provider.begin_authorization(redirect)).query)["state"][0]
+        try:
+            provider.complete_authorization(tmp_path, state=state, code="code", redirect_uri=redirect, picked_file_ids=selected)
+            assert False, "non-folder and shortcut roots must fail"
+        except provider.GoogleDriveError:
+            pass
+    provider.disconnect(tmp_path)
+
+
+def test_google_drive_v098_root_account_boundary_and_bounded_listing(monkeypatch):
+    import inspect
+    import google_drive_provider as provider
+    captured = []
+    monkeypatch.setattr(provider, "access_token", lambda _root: "memory-token")
+    def response(url, _token, **_kwargs):
+        captured.append(url)
+        if "/about?" in url:
+            return {"user":{"permissionId":"account-one"}}
+        if "/files/rootfolder1?" in url:
+            return {"id":"rootfolder1","name":"Approved","mimeType":provider.FOLDER_MIME_TYPE,"trashed":False,"capabilities":{"canListChildren":True}}
+        return {"files":[
+            {"id":"childfile01","name":"Duplicate","mimeType":"application/pdf","modifiedTime":"2026-09-14T12:00:00Z","trashed":False},
+            {"id":"childfile02","name":"Duplicate","mimeType":provider.FOLDER_MIME_TYPE,"modifiedTime":"","trashed":False},
+            {"id":"shortcut01","name":"Outside shortcut","mimeType":provider.SHORTCUT_MIME_TYPE,"trashed":False},
+        ]}
+    monkeypatch.setattr(provider, "_get_json", response)
+    verified = provider.verify_approved_root(Path("."), approved_root_id="rootfolder1", account_permission_id="account-one")
+    assert verified["approved_root_id"] == "rootfolder1"
+    items = provider.list_approved_root_children(Path("."), approved_root_id="rootfolder1", account_permission_id="account-one")
+    assert items == [
+        {"id":"childfile01","name":"Duplicate","mime_type":"application/pdf","kind":"file","modified_time":"2026-09-14T12:00:00Z"},
+        {"id":"childfile02","name":"Duplicate","mime_type":provider.FOLDER_MIME_TYPE,"kind":"folder","modified_time":""},
+    ]
+    list_url = next(url for url in captured if "/files?" in url)
+    assert "%27rootfolder1%27+in+parents" in list_url and "pageSize=100" in list_url
+    assert "nextPageToken" not in list_url and provider.MAX_ROOT_CHILDREN == 100
+    assert set(inspect.signature(campus.api_google_drive_root_children).parameters) == set()
+    assert not any(name in provider.__dict__ for name in ("search_drive", "download_file", "upload_file", "list_all_files"))
+    try:
+        provider.verify_approved_root(Path("."), approved_root_id="rootfolder1", account_permission_id="different-account")
+        assert False, "wrong account must require a new root approval"
+    except provider.GoogleDriveError as exc:
+        assert "different account" in str(exc)
+
+
+def test_google_drive_v098_root_validation_fails_closed(monkeypatch):
+    import google_drive_provider as provider
+    monkeypatch.setattr(provider, "access_token", lambda _root: "memory-token")
+    monkeypatch.setattr(provider, "_account", lambda _token: {"account_permission_id":"account-one"})
+    invalid = [
+        {"id":"rootfolder1","name":"Missing","mimeType":provider.FOLDER_MIME_TYPE,"trashed":True,"capabilities":{"canListChildren":True}},
+        {"id":"rootfolder1","name":"File","mimeType":"application/pdf","trashed":False,"capabilities":{}},
+        {"id":"rootfolder1","name":"No access","mimeType":provider.FOLDER_MIME_TYPE,"trashed":False,"capabilities":{"canListChildren":False}},
+        {"id":"outside001","name":"Wrong ID","mimeType":provider.FOLDER_MIME_TYPE,"trashed":False,"capabilities":{"canListChildren":True}},
+    ]
+    for payload in invalid:
+        monkeypatch.setattr(provider, "_get_json", lambda *_args, _payload=payload, **_kwargs: _payload)
+        try:
+            provider.verify_approved_root(Path("."), approved_root_id="rootfolder1", account_permission_id="account-one")
+            assert False, "invalid root must fail closed"
+        except provider.GoogleDriveError:
+            pass
+    monkeypatch.setattr(provider, "_get_json", lambda *_args, **_kwargs: (_ for _ in ()).throw(provider.GoogleDriveError("The approved Google Drive root is missing or inaccessible.")))
+    try:
+        provider.verify_approved_root(Path("."), approved_root_id="rootfolder1", account_permission_id="account-one")
+        assert False, "missing root must fail closed"
+    except provider.GoogleDriveError:
+        pass
+
+
+def test_google_drive_v098_schema_state_write_boundaries_disconnect_and_privacy(tmp_path, monkeypatch):
+    import google_drive_provider as provider
+    old = campus.DB_PATH
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "drive-foundation.db")
+    campus.init_db()
+    drive_token = tmp_path / provider.TOKEN_FILENAME
+    calendar_token = tmp_path / ".google-calendar-token.json"
+    drive_token.write_text('{"refresh_token":"drive-secret-sentinel"}', encoding="utf-8")
+    calendar_token.write_text('{"refresh_token":"calendar-secret-sentinel"}', encoding="utf-8")
+    monkeypatch.setattr(provider, "combined_environment", lambda: {"GOOGLE_DRIVE_CLIENT_ID":"drive-client"})
+    monkeypatch.setattr(campus, "google_drive_configured", lambda _root: True)
+    with campus.db() as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(drive_connection_state)")}
+        assert columns == {"id","approved_root_id","approved_root_name","account_permission_id","last_verified_at","last_verification_status","last_verification_error","updated_at"}
+        conn.execute("UPDATE drive_connection_state SET approved_root_id='rootfolder1',approved_root_name='PRIVATE ROOT',account_permission_id='account-one' WHERE id=1")
+        before = list(conn.iterdump())
+        state = campus.current_state()
+    assert "drive" not in state and "PRIVATE ROOT" not in str(state) and "drive-secret-sentinel" not in str(state)
+    assert "community_contributions" not in state and "contribution_offers" not in state
+    with campus.db() as conn:
+        prompts = [campus._campus_advisor_prompt(agent, "ordinary question", conn) for agent in ("stella","percy","rose","stewart")]
+    assert all("PRIVATE ROOT" not in prompt and "drive-secret-sentinel" not in prompt for prompt in prompts)
+    monkeypatch.setattr(campus, "list_approved_root_children", lambda *_args, **_kwargs: [{"id":"childfile01","name":"Visible metadata","mime_type":"application/pdf","kind":"file","modified_time":""}])
+    listed = asyncio.run(campus.api_google_drive_root_children())
+    assert listed["count"] == 1 and listed["additional_ai_calls"] == 0
+    with campus.db() as conn:
+        assert list(conn.iterdump()) == before
+    monkeypatch.setattr(campus, "verify_approved_root", lambda *_args, **_kwargs: {"approved_root_id":"rootfolder1","approved_root_name":"Renamed root","account_permission_id":"account-one"})
+    verified = asyncio.run(campus.api_google_drive_verify())
+    assert verified["last_verification_status"] == "Success"
+    asyncio.run(campus.api_google_drive_disconnect())
+    assert not drive_token.exists() and calendar_token.exists()
+    with campus.db() as conn:
+        row = conn.execute("SELECT * FROM drive_connection_state WHERE id=1").fetchone()
+        assert row["approved_root_id"] is None and row["account_permission_id"] is None and row["last_verification_status"] == "Disconnected"
+    monkeypatch.setattr(campus, "DB_PATH", old)
+
+
+def test_google_drive_v098_secret_upgrade_prompt_and_role_boundaries(tmp_path):
+    import logging
+    import upgrade_helper as helper
+    import google_drive_provider as provider
+    ignore = (ROOT/".gitignore").read_text(encoding="utf-8")
+    assert provider.TOKEN_FILENAME in ignore and provider.TOKEN_FILENAME in helper.GOOGLE_DRIVE_TOKEN_FILE
+    source = tmp_path/"old"; target = tmp_path/"new"
+    source.mkdir(); target.mkdir()
+    (source/"mavis.db").write_bytes(b"db")
+    (source/".env").write_text("GOOGLE_DRIVE_CLIENT_ID=private-client\nGOOGLE_DRIVE_CLIENT_SECRET=private-secret\nSAFE_SETTING=yes\n", encoding="utf-8")
+    helper.BACKUP_DIR = tmp_path/"backups"
+    helper.import_previous(source, target)
+    imported = (target/".env").read_text(encoding="utf-8")
+    assert "private-client" not in imported and "private-secret" not in imported and "SAFE_SETTING=yes" in imported
+    manifest = helper.portable_manifest(target)
+    assert provider.TOKEN_FILENAME in manifest["excludes"]
+    record = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d', ("127.0.0.1","GET","/api/drive/google/callback?code=private-code&picked_file_ids=private-root","1.1",200), None)
+    campus._GoogleOAuthAccessLogFilter().filter(record)
+    assert "private-code" not in str(record.args) and record.args[2] == "/api/drive/google/callback"
+    for agent in ("stella","percy","rose","stewart"):
+        with campus.db() as conn:
+            prompt = campus._campus_advisor_prompt(agent, "ordinary question", conn)
+        assert "private-client" not in prompt and "private-secret" not in prompt
+    app_source = (ROOT/"app.py").read_text(encoding="utf-8")
+    js = (ROOT/"static/js/app.js").read_text(encoding="utf-8")
+    manifest = __import__("json").loads((ROOT/"static/assets/asset-manifest.json").read_text(encoding="utf-8"))
+    assert all(marker in js for marker in ("data-google-drive-connect","data-google-drive-verify","data-google-drive-list","data-google-drive-disconnect","/api/drive/google/root-children"))
+    assert provider.TOKEN_FILENAME not in js and "GOOGLE_DRIVE_CLIENT_SECRET" not in js
+    assert manifest["google_drive_foundation"]["approved_root_required"] is True
+    assert manifest["google_drive_foundation"]["ai_context"] is False and manifest["google_drive_foundation"]["websocket_payloads"] is False
+    assert "/api/drive/google/upload" not in app_source and "drive.google" not in (ROOT/"agents/librarian.py").read_text(encoding="utf-8")
+    assert "google_drive" not in (ROOT/"agents/research.py").read_text(encoding="utf-8") and "google_drive" not in (ROOT/"agents/programs.py").read_text(encoding="utf-8")
+
+
+def test_google_drive_v098_upgrade_path_adds_only_connection_state(tmp_path, monkeypatch):
+    old = campus.DB_PATH
+    db_path = tmp_path/"upgrade-drive.db"
+    import sqlite3
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE legacy_marker(id INTEGER PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT INTO legacy_marker(value) VALUES('preserved')")
+    monkeypatch.setattr(campus, "DB_PATH", db_path)
+    campus.init_db()
+    with campus.db() as conn:
+        assert conn.execute("SELECT value FROM legacy_marker").fetchone()[0] == "preserved"
+        assert conn.execute("SELECT COUNT(*) FROM drive_connection_state").fetchone()[0] == 1
+    monkeypatch.setattr(campus, "DB_PATH", old)
+
+
 def test_v08742_cleanup_people_first_ui_and_stable_ids():
     import json
     index=(ROOT/'static/index.html').read_text(encoding='utf-8')
@@ -8156,8 +8373,8 @@ def test_v096_seasonal_context_transparency_ui_and_release_contract():
     js = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
     css = (ROOT / "static/css/app.css").read_text(encoding="utf-8")
     manifest = json.loads((ROOT / "static/assets/asset-manifest.json").read_text(encoding="utf-8"))
-    assert LIVE_VERSION == "0.9.7"
-    assert LIVE_CACHE_KEY == "098"
+    assert LIVE_VERSION == "0.9.8"
+    assert LIVE_CACHE_KEY == "099"
     assert "Rose’s Seasonal Briefing" in js
     assert "getJson('/api/environment/seasonal-context')" in js
     assert "Observed Now" in js and "established observations" in js

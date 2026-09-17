@@ -1,8 +1,18 @@
-# Mavis Digital Campus v0.9.7 — Community Contribution Ledger + Google Calendar
+# Mavis Digital Campus v0.9.8 — Google Drive Approved-Root Foundation
 
-## v0.9.7 focus
+## v0.9.8 focus
 
-Mavis Digital Campus v0.9.7 combines the current local institutional-support system: project and approval workflows, People and Work Hours, the privacy-bounded Community Contribution Ledger, trusted Library and institutional memory, Weather & Seasons, grants, the internal Campus Calendar, and deterministic Daily Steward planning. Google Calendar v1 adds manual, read-only primary-calendar synchronization into the existing event model; Ask Campus can answer narrowly matched local calendar and future-focus questions without sending event content to an external AI provider.
+Mavis Digital Campus v0.9.8 adds a narrowly scoped Google Drive foundation while preserving the current project, People, contribution, Library, Weather, grants, Calendar, and deterministic planning systems. An operator can connect a separate Drive authorization, explicitly approve one root folder, verify that binding, and list only its immediate contents. The foundation does not download or index Drive content, upload files, export work hours, add Drive data to AI prompts, or grant Rose or Poe new network authority.
+
+### Google Drive foundation
+
+- Drive uses a separate OAuth token and the narrow `drive.file` scope.
+- Connect opens Google's folder-selection flow and requires exactly one approved folder.
+- Every verification and listing is bound to the stored root ID and Google account identity.
+- Immediate listing is manual, bounded, and returns metadata only. It never searches the rest of Drive.
+- Drive status stays outside general `/api/state` and WebSocket payloads.
+- `.google-drive-token.json` and Drive OAuth credentials remain local and are excluded from Git, portable backups, and previous-version imports.
+- Rose indexing and Poe work-hour archives remain deliberately deferred.
 
 ### Ambient staff movement
 
@@ -35,14 +45,14 @@ This release searches **Grants.gov only** for Vernadette's live grant discovery.
 
 The existing **Weather & Seasons** system remains unchanged: personal-weather-station data can be used when authorized, with the regional forecast fallback retained.
 
-Target schema: **0.9.7**.
+Target schema: **0.9.8**.
 
 ## Upgrade
 
-1. Extract v0.9.7 into a new folder.
+1. Extract v0.9.8 into a new folder.
 2. Run `IMPORT DATA FROM PREVIOUS VERSION.bat`.
-3. Point it at your working **v0.9.3** folder.
-4. Start v0.9.7 normally.
+3. Point it at your working **v0.9.7** folder.
+4. Start v0.9.8 normally.
 5. Leave the Campus map open for a minute or two; available staff should occasionally move gently around their home area.
 6. Ask two or three questions. The newest exchange should stay at the top; scroll down inside the response panel to see older ones.
 

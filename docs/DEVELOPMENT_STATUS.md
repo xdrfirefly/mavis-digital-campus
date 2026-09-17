@@ -16,11 +16,12 @@ Audit scope: repository contents as inspected on 2026-09-07. This document does 
 - Manual Community Contribution Ledger for Person/Organization identities, offers, received money/sponsorships, goods/materials, professional services, equipment/space, and introductions/outreach. It supports project/event links, existing follow-up tasks, completed work-session links, thank-you/follow-up status, multiple fulfillments, unknown values, and idempotent received-entry submission keys without adding ledger details to shared state, WebSockets, exports, AI context, or general logs.
 - Events/calendar foundation, local moon calculation, weather/seasonal data storage and refresh adapter.
 - Manual read-only Google Calendar v1 for the primary calendar, using the existing event model and a bounded local cache; no startup/state refresh, write-back, or incremental sync.
+- Google Drive v0.9.8 foundation with separate `drive.file` OAuth, one explicitly approved root/account binding, manual verification, and bounded immediate-root metadata listing. Downloads, recursive traversal, Library indexing, uploads, work-hour exports, automatic access, shared state, WebSockets, and AI context remain disabled.
 - Phase 1 phenology observations with human, imported, and suggested sources; Rose review can confirm or reject suggestions without feeding planning logic.
 - Phase 2 trusted phenology history comparison across years, including optional location filtering and factual date summaries.
 - Phase 5 Seasonal Context: Rose's read-only, 45-day seasonal evidence bridge separates established observations from open checks; Stella can summarize it through Ask Campus and users can inspect the same context in Weather & Seasons → Phenology, without affecting Daily Steward or planning.
 - Grants.gov discovery/import and local grant tracking.
-- 221 test functions in `tests/test_smoke.py`, covering backend behavior plus static/UI regression guards.
+- The smoke/regression suite in `tests/test_smoke.py` covers backend behavior plus static/UI regression guards.
 
 ## Partial
 

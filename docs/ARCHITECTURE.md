@@ -52,6 +52,7 @@ No `mavis.db` was present in the audited checkout; `library/` and `repository/` 
 - `weather_provider.py` reads an optional Weather Underground key, uses a personal weather station when available, and falls back to Open-Meteo forecasts.
 - `grant_provider.py` searches the public Grants.gov Search2 API; it does not submit applications.
 - `google_calendar_provider.py` performs manual, read-only OAuth and bounded primary-calendar reads. It returns only Google-owned schedule fields and keeps access tokens in memory.
+- `google_drive_provider.py` performs separate `drive.file` OAuth with PKCE, validates one explicitly selected root/account binding, and exposes only root verification and a bounded immediate-child listing. It does not download, upload, index, or search Drive generally.
 - `upgrade_helper.py` powers the provided import/backup/restore scripts.
 
 ## Important data flows
@@ -67,6 +68,8 @@ No `mavis.db` was present in the audited checkout; `library/` and `repository/` 
 
 9. Google Calendar v1 manually expands primary-calendar occurrences for a 30-day-past/180-day-future window and upserts them into `events`. Google owns schedule fields; Campus project/type/commitment/notes annotations survive refresh. State reads never call Google, disconnect retains cached events, and no attendee, organizer, description, conferencing, attachment, reminder, or response data crosses the provider boundary.
 
+10. Google Drive v0.9.8 uses a separate local token and singleton connection record. Connect requires one Google-selected folder; verification binds its opaque root ID to the authenticated account permission ID. Dedicated routes can verify that exact root or list up to 100 immediate non-shortcut children using an explicit parent query. Drive status is excluded from general state and WebSockets, and no Drive content enters Library indexing, work-hours exports, activity records, or AI prompts.
+
 The next contribution layer is intentionally deferred: natural-language capture, exports/dashboards, broader reporting, and any automated communications. Personal/nonprofit visibility and permissions require a separate design before shared access is expanded.
 
 ## Local access boundary
@@ -77,4 +80,4 @@ Community contribution records use the existing identity, project, event, task, 
 
 ## Configuration
 
-Environment names documented in `.env.example`: `GEMINI_API_KEY`, `GEMINI_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `CHIEF_PROVIDER`, `RESEARCH_PROVIDER`, `PROGRAMS_PROVIDER`, `CARETAKER_PROVIDER`, `WEATHER_UNDERGROUND_API_KEY`, `GOOGLE_CALENDAR_CLIENT_ID`, and `GOOGLE_CALENDAR_CLIENT_SECRET`. The Google refresh token is stored separately in ignored `.google-calendar-token.json`. The token and Google OAuth credential values are excluded from portable backups and previous-version imports, so Calendar must be reconnected after an upgrade. Never place values in documentation or source control.
+Environment names documented in `.env.example`: `GEMINI_API_KEY`, `GEMINI_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `CHIEF_PROVIDER`, `RESEARCH_PROVIDER`, `PROGRAMS_PROVIDER`, `CARETAKER_PROVIDER`, `WEATHER_UNDERGROUND_API_KEY`, `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET`, `GOOGLE_DRIVE_CLIENT_ID`, and `GOOGLE_DRIVE_CLIENT_SECRET`. Google refresh tokens are stored separately in ignored `.google-calendar-token.json` and `.google-drive-token.json`. Tokens and Google OAuth credential values are excluded from portable backups and previous-version imports, so integrations must be reconnected after an upgrade. Never place values in documentation or source control.

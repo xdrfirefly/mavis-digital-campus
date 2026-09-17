@@ -6,6 +6,7 @@ from difflib import SequenceMatcher
 import io
 import hashlib
 import json
+import logging
 import math
 import mimetypes
 import re
@@ -48,6 +49,16 @@ from google_calendar_provider import (
     disconnect as disconnect_google_calendar,
     list_primary_events,
 )
+from google_drive_provider import (
+    GoogleDriveError,
+    begin_authorization as begin_google_drive_authorization,
+    complete_authorization as complete_google_drive_authorization,
+    configured as google_drive_configured,
+    credentials as google_drive_credentials,
+    disconnect as disconnect_google_drive,
+    list_approved_root_children,
+    verify_approved_root,
+)
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "mavis.db"
@@ -65,7 +76,7 @@ OPENAI_LIST_PRICES_PER_MILLION = {
 }
 TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4.0
 DEFAULT_DAILY_ESTIMATED_COST_LIMIT_USD = 1.00
-SCHEMA_VERSION = "0.9.7"
+SCHEMA_VERSION = "0.9.8"
 MAX_LIBRARY_UPLOAD_BYTES = 100 * 1024 * 1024
 LIBRARY_MATERIAL_TYPES = ("Lesson Plan", "Instructor Notes", "Worksheet", "Slideshow", "Handout", "Supply List", "Photo", "Video", "Audio", "Document", "Spreadsheet", "Archive", "Reference", "Other")
 PROGRAMS_LIBRARY_DECISIONS = ("reuse", "revise", "create_new")
@@ -325,6 +336,17 @@ def init_db() -> None:
                 last_refresh_status TEXT NOT NULL DEFAULT 'Never',
                 last_refresh_error TEXT NOT NULL DEFAULT '',
                 last_import_count INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS drive_connection_state (
+                id INTEGER PRIMARY KEY CHECK(id=1),
+                approved_root_id TEXT,
+                approved_root_name TEXT,
+                account_permission_id TEXT,
+                last_verified_at TEXT,
+                last_verification_status TEXT NOT NULL DEFAULT 'Never',
+                last_verification_error TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL
             );
 
@@ -842,6 +864,7 @@ def init_db() -> None:
                 conn.execute(f"ALTER TABLE events ADD COLUMN {column} {ddl}")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_events_external_identity ON events(source,external_calendar_id,external_event_id)")
         conn.execute("INSERT OR IGNORE INTO calendar_sync_state(id,updated_at) VALUES(1,?)", (utc_now(),))
+        conn.execute("INSERT OR IGNORE INTO drive_connection_state(id,updated_at) VALUES(1,?)", (utc_now(),))
 
         # v0.8.7: federal grant discovery source identity. Existing manual
         # Grant Desk rows remain untouched; imported opportunities can be deduplicated.
@@ -4143,6 +4166,22 @@ def google_calendar_status(conn: sqlite3.Connection) -> dict[str, Any]:
         "last_refresh_status": row["last_refresh_status"] if row else "Never",
         "last_refresh_error": row["last_refresh_error"] if row else "",
         "last_import_count": int(row["last_import_count"] or 0) if row else 0,
+    }
+
+
+def google_drive_status(conn: sqlite3.Connection) -> dict[str, Any]:
+    row = conn.execute("SELECT * FROM drive_connection_state WHERE id=1").fetchone()
+    client_id, _ = google_drive_credentials()
+    bound = bool(row and row["approved_root_id"] and row["account_permission_id"])
+    return {
+        "credentials_configured": bool(client_id),
+        "connected": bool(bound and google_drive_configured(DB_PATH.parent)),
+        "approved_root_name": str(row["approved_root_name"] or "") if row else "",
+        "root_approved": bound,
+        "account_bound": bool(row and row["account_permission_id"]),
+        "last_verified_at": row["last_verified_at"] if row else None,
+        "last_verification_status": row["last_verification_status"] if row else "Never",
+        "last_verification_error": row["last_verification_error"] if row else "",
     }
 
 
@@ -7653,8 +7692,24 @@ class AIBudgetRequest(BaseModel):
     daily_estimated_cost_limit_usd: float
 
 
+class _GoogleOAuthAccessLogFilter(logging.Filter):
+    """Keep authorization codes and callback parameters out of Uvicorn access logs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple) and len(record.args) >= 3:
+            path = str(record.args[2])
+            if path.startswith(("/api/calendar/google/callback?", "/api/drive/google/callback?")):
+                safe_args = list(record.args)
+                safe_args[2] = path.split("?", 1)[0]
+                record.args = tuple(safe_args)
+        return True
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    access_logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(item, _GoogleOAuthAccessLogFilter) for item in access_logger.filters):
+        access_logger.addFilter(_GoogleOAuthAccessLogFilter())
     init_db()
     recovered = reconcile_interrupted_workflows()
     approval_repairs = repair_approval_invariants()
@@ -8439,6 +8494,92 @@ async def api_google_calendar_disconnect() -> dict[str, Any]:
         conn.execute("UPDATE calendar_sync_state SET last_refresh_status='Disconnected',last_refresh_error='',updated_at=? WHERE id=1", (now,))
     await hub.broadcast()
     return {"status": "disconnected", "cached_events_retained": True}
+
+
+def _google_drive_binding(conn: sqlite3.Connection) -> tuple[str, str]:
+    row = conn.execute("SELECT approved_root_id,account_permission_id FROM drive_connection_state WHERE id=1").fetchone()
+    root_id = str(row["approved_root_id"] or "") if row else ""
+    account_id = str(row["account_permission_id"] or "") if row else ""
+    if not root_id or not account_id or not google_drive_configured(DB_PATH.parent):
+        raise GoogleDriveError("Google Drive is not connected to an approved Campus root.")
+    return root_id, account_id
+
+
+@app.get("/api/drive/google/status")
+async def api_google_drive_status() -> dict[str, Any]:
+    with db() as conn:
+        return google_drive_status(conn)
+
+
+@app.post("/api/drive/google/connect")
+async def api_google_drive_connect(request: Request) -> dict[str, str]:
+    try:
+        redirect_uri = str(request.url_for("api_google_drive_callback"))
+        return {"authorization_url": begin_google_drive_authorization(redirect_uri)}
+    except GoogleDriveError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/drive/google/callback", response_class=HTMLResponse)
+async def api_google_drive_callback(request: Request, state: str = "", code: str = "", picked_file_ids: str = "", error: str = "") -> HTMLResponse:
+    if error or not state or not code or not picked_file_ids:
+        raise HTTPException(status_code=400, detail="Google Drive connection or folder selection was cancelled or incomplete.")
+    try:
+        binding = complete_google_drive_authorization(
+            DB_PATH.parent,
+            state=state,
+            code=code,
+            redirect_uri=str(request.url_for("api_google_drive_callback")),
+            picked_file_ids=picked_file_ids,
+        )
+    except GoogleDriveError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    now = utc_now()
+    with db() as conn:
+        conn.execute("""UPDATE drive_connection_state
+            SET approved_root_id=?,approved_root_name=?,account_permission_id=?,last_verified_at=?,
+                last_verification_status='Success',last_verification_error='',updated_at=? WHERE id=1""",
+            (binding["approved_root_id"],binding["approved_root_name"],binding["account_permission_id"],now,now))
+    return HTMLResponse("<p>Google Drive root approved. <a href='/'>Return to Mavis Digital Campus</a>.</p>")
+
+
+@app.post("/api/drive/google/verify")
+async def api_google_drive_verify() -> dict[str, Any]:
+    try:
+        with db() as conn:
+            root_id, account_id = _google_drive_binding(conn)
+        verified = await asyncio.to_thread(verify_approved_root, DB_PATH.parent, approved_root_id=root_id, account_permission_id=account_id)
+    except GoogleDriveError as exc:
+        now = utc_now()
+        with db() as conn:
+            conn.execute("UPDATE drive_connection_state SET last_verified_at=?,last_verification_status='Failed',last_verification_error=?,updated_at=? WHERE id=1", (now,str(exc)[:500],now))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    now = utc_now()
+    with db() as conn:
+        conn.execute("UPDATE drive_connection_state SET approved_root_name=?,last_verified_at=?,last_verification_status='Success',last_verification_error='',updated_at=? WHERE id=1", (verified["approved_root_name"],now,now))
+        return google_drive_status(conn)
+
+
+@app.get("/api/drive/google/root-children")
+async def api_google_drive_root_children() -> dict[str, Any]:
+    try:
+        with db() as conn:
+            root_id, account_id = _google_drive_binding(conn)
+        items = await asyncio.to_thread(list_approved_root_children, DB_PATH.parent, approved_root_id=root_id, account_permission_id=account_id)
+    except GoogleDriveError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status":"ok","items":items,"count":len(items),"scope":"approved_root_immediate_children","additional_ai_calls":0}
+
+
+@app.post("/api/drive/google/disconnect")
+async def api_google_drive_disconnect() -> dict[str, str]:
+    disconnect_google_drive(DB_PATH.parent)
+    with db() as conn:
+        now = utc_now()
+        conn.execute("""UPDATE drive_connection_state SET approved_root_id=NULL,approved_root_name=NULL,
+            account_permission_id=NULL,last_verified_at=NULL,last_verification_status='Disconnected',
+            last_verification_error='',updated_at=? WHERE id=1""", (now,))
+    return {"status":"disconnected"}
 
 
 @app.get("/api/work-report")
