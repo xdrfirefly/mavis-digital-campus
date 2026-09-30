@@ -8537,3 +8537,122 @@ def test_v097_additive_identity_migration_preserves_legacy_people(tmp_path, monk
     assert person["entity_kind"] == "Person"
     assert person["contact_info"] == "kept contact" and person["notes"] == "kept note"
     assert {"contribution_offers", "community_contributions"}.issubset(tables)
+
+
+def test_v099_phase1_library_intake_module_is_framework_free_and_upload_delegates():
+    import inspect
+    import library_intake
+
+    source = (ROOT / "library_intake.py").read_text(encoding="utf-8")
+    assert "fastapi" not in source.lower()
+    assert "google_drive" not in source.lower()
+    assert library_intake.MAX_LIBRARY_UPLOAD_BYTES == campus.MAX_LIBRARY_UPLOAD_BYTES == 100 * 1024 * 1024
+    upload_source = inspect.getsource(campus.api_library_inbox_upload)
+    assert "IncomingFileStager" in upload_source
+    assert "register_staged_incoming" in upload_source
+
+
+def test_v099_phase1_library_intake_staging_dedupe_and_cleanup(tmp_path):
+    import sqlite3
+    from library_intake import IncomingFileStager, LibraryIntakeError, register_staged_incoming
+
+    inbox = tmp_path / "library" / "inbox"
+    database_root = tmp_path
+    with sqlite3.connect(tmp_path / "intake.db") as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("""CREATE TABLE library_inbox(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, original_filename TEXT NOT NULL,
+            stored_filename TEXT NOT NULL, relative_path TEXT NOT NULL UNIQUE,
+            mime_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, sha256 TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL, source_kind TEXT NOT NULL, notes TEXT NOT NULL,
+            created_by TEXT NOT NULL, received_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        )""")
+
+        with IncomingFileStager(inbox, filename="../../Class Notes.txt", max_bytes=64) as stager:
+            stager.write(b"Mavis class notes")
+            staged = stager.finish()
+        received = register_staged_incoming(
+            conn, staged, database_root=database_root, mime_type="text/plain",
+            source_kind="upload", created_by="Human", received_at="2026-09-30T12:00:00+00:00",
+        )
+        assert received["status"] == "received"
+        assert received["original_filename"] == "Class Notes.txt"
+        saved = conn.execute("SELECT * FROM library_inbox WHERE id=?", (received["inbox_id"],)).fetchone()
+        assert saved["status"] == "Incoming" and saved["source_kind"] == "upload"
+        assert (database_root / saved["relative_path"]).read_bytes() == b"Mavis class notes"
+
+        with IncomingFileStager(inbox, filename="Duplicate.txt", max_bytes=64) as stager:
+            stager.write(b"Mavis class notes")
+            duplicate_staged = stager.finish()
+        duplicate = register_staged_incoming(
+            conn, duplicate_staged, database_root=database_root, mime_type="text/plain",
+            source_kind="upload", created_by="Human", received_at="2026-09-30T12:01:00+00:00",
+        )
+        assert duplicate["status"] == "duplicate"
+        assert duplicate["inbox_id"] == received["inbox_id"]
+        assert not duplicate_staged.temp_path.exists()
+        assert conn.execute("SELECT COUNT(*) FROM library_inbox").fetchone()[0] == 1
+
+    try:
+        with IncomingFileStager(inbox, filename="Too Large.txt", max_bytes=4) as stager:
+            stager.write(b"12345")
+        assert False, "oversized staged input should fail"
+    except LibraryIntakeError as exc:
+        assert exc.code == "too_large"
+    assert not list(inbox.glob(".incoming-*"))
+
+    try:
+        with IncomingFileStager(inbox, filename="Empty.txt", max_bytes=64) as stager:
+            stager.finish()
+        assert False, "empty staged input should fail"
+    except LibraryIntakeError as exc:
+        assert exc.code == "empty"
+    assert not list(inbox.glob(".incoming-*"))
+
+
+def test_v099_phase1_office_archive_limits_fail_closed(tmp_path, monkeypatch):
+    import zipfile
+    import library_indexer as indexer
+
+    def office_file(name, entries):
+        path = tmp_path / name
+        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for entry_name, payload in entries:
+                archive.writestr(entry_name, payload)
+        return path
+
+    assert indexer.MAX_OFFICE_ZIP_ENTRIES >= 100
+    assert indexer.MAX_OFFICE_ZIP_TOTAL_BYTES >= indexer.MAX_OFFICE_ZIP_ENTRY_BYTES
+    assert indexer.MAX_OFFICE_ZIP_COMPRESSION_RATIO >= 10
+
+    monkeypatch.setattr(indexer, "MAX_OFFICE_ZIP_ENTRIES", 2)
+    too_many = office_file("too-many.docx", [
+        ("word/document.xml", b"<w:t>one</w:t>"),
+        ("word/header1.xml", b"<w:t>two</w:t>"),
+        ("word/footer1.xml", b"<w:t>three</w:t>"),
+    ])
+    result = indexer.extract_library_text(too_many, original_filename=too_many.name)
+    assert result["status"] == "error" and "entry count" in result["error"].lower()
+
+    monkeypatch.setattr(indexer, "MAX_OFFICE_ZIP_ENTRIES", 100)
+    monkeypatch.setattr(indexer, "MAX_OFFICE_ZIP_ENTRY_BYTES", 20)
+    oversized_entry = office_file("entry-too-large.pptx", [("ppt/slides/slide1.xml", b"x" * 21)])
+    result = indexer.extract_library_text(oversized_entry, original_filename=oversized_entry.name)
+    assert result["status"] == "error" and "individual entry" in result["error"].lower()
+
+    monkeypatch.setattr(indexer, "MAX_OFFICE_ZIP_ENTRY_BYTES", 100)
+    monkeypatch.setattr(indexer, "MAX_OFFICE_ZIP_TOTAL_BYTES", 30)
+    excessive_total = office_file("total-too-large.xlsx", [
+        ("xl/sharedStrings.xml", b"a" * 20),
+        ("xl/worksheets/sheet1.xml", b"b" * 20),
+    ])
+    result = indexer.extract_library_text(excessive_total, original_filename=excessive_total.name)
+    assert result["status"] == "error" and "cumulative" in result["error"].lower()
+
+    monkeypatch.setattr(indexer, "MAX_OFFICE_ZIP_TOTAL_BYTES", 20_000)
+    monkeypatch.setattr(indexer, "MAX_OFFICE_ZIP_ENTRY_BYTES", 20_000)
+    monkeypatch.setattr(indexer, "MIN_OFFICE_ZIP_RATIO_CHECK_BYTES", 100)
+    monkeypatch.setattr(indexer, "MAX_OFFICE_ZIP_COMPRESSION_RATIO", 2.0)
+    suspicious_ratio = office_file("ratio.docx", [("word/document.xml", b"A" * 4096)])
+    result = indexer.extract_library_text(suspicious_ratio, original_filename=suspicious_ratio.name)
+    assert result["status"] == "error" and "compression ratio" in result["error"].lower()

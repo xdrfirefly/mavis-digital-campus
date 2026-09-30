@@ -14,6 +14,10 @@ Mavis Digital Campus v0.9.8 adds a narrowly scoped Google Drive foundation while
 - `.google-drive-token.json` and Drive OAuth credentials remain local and are excluded from Git, portable backups, and previous-version imports.
 - Rose indexing and Poe work-hour archives remain deliberately deferred.
 
+### v0.9.9 Phase 1 preparation
+
+Development preparation for the next bounded Drive-to-Library phase factors the existing browser-upload intake path into a reusable, framework-neutral Library quarantine service. Browser uploads still stop in Incoming Materials and still require human Cataloging Desk approval before local indexing or Rose retrieval. DOCX, PPTX, and XLSX extraction now rejects archives with excessive entry counts, individual or cumulative expansion, encrypted entries, or suspicious compression ratios. This phase adds no Drive browsing, downloads, imports, permissions, write-back, synchronization, schema changes, or frontend behavior.
+
 ### Ambient staff movement
 
 - Available staff now occasionally wander a short distance around their current/home area.

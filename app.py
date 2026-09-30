@@ -37,6 +37,13 @@ from agents.chief_revision import ChiefRevisionError, run_chief_revision_plan
 from agents.research import ResearchError, run_research
 from agents.programs import ProgramsError, run_programs
 from agents.librarian import search_trusted_library
+from library_intake import (
+    MAX_LIBRARY_UPLOAD_BYTES,
+    IncomingFileStager,
+    LibraryIntakeError,
+    register_staged_incoming,
+    safe_library_filename,
+)
 from library_indexer import extract_library_text
 from weather_provider import refresh_weather as refresh_weather_provider, weather_underground_key_available
 from grant_provider import GrantDiscoveryError, search_grants_gov
@@ -77,7 +84,6 @@ OPENAI_LIST_PRICES_PER_MILLION = {
 TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4.0
 DEFAULT_DAILY_ESTIMATED_COST_LIMIT_USD = 1.00
 SCHEMA_VERSION = "0.9.8"
-MAX_LIBRARY_UPLOAD_BYTES = 100 * 1024 * 1024
 LIBRARY_MATERIAL_TYPES = ("Lesson Plan", "Instructor Notes", "Worksheet", "Slideshow", "Handout", "Supply List", "Photo", "Video", "Audio", "Document", "Spreadsheet", "Archive", "Reference", "Other")
 PROGRAMS_LIBRARY_DECISIONS = ("reuse", "revise", "create_new")
 GRANT_STATUSES = ("Discovered", "Reviewing", "Pursue", "Preparing", "Submitted", "Awarded", "Declined", "Passed")
@@ -1648,7 +1654,7 @@ def materialize_programs_library_reuse(
         if root not in source.parents or not source.is_file():
             continue
         original = str(material["original_filename"] or source.name)
-        _, safe = _safe_library_filename(original)
+        _, safe = safe_library_filename(original)
         destination = folder / f"library-{int(material['id']):04d}-{safe}"
         try:
             shutil.copy2(source, destination)
@@ -1927,16 +1933,6 @@ def archive_approved_programs_project(
         "edition_label":edition_label,"material_ids":material_ids,"material_count":len(material_ids),
         "skipped_count":skipped,"errors":errors,"additional_ai_calls":0,"web_access":False,
     }
-
-
-def _safe_library_filename(filename: str) -> tuple[str, str]:
-    raw = str(filename or '').replace('\\', '/').split('/')[-1].strip()
-    if not raw or raw in {'.', '..'}:
-        raise HTTPException(status_code=400, detail='A valid filename is required.')
-    original = raw[:240]
-    safe = re.sub(r'[^A-Za-z0-9._ -]+', '_', original).strip(' .')
-    safe = re.sub(r'\s+', ' ', safe)[:180] or 'library-file'
-    return original, safe
 
 
 def library_foundation_summary(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -9677,7 +9673,11 @@ async def api_library_inbox(limit: int = 250) -> dict[str, Any]:
 @app.post("/api/library/inbox/upload")
 async def api_library_inbox_upload(request: Request, filename: str = "") -> dict[str, Any]:
     """Store one raw uploaded file in the local Library Drop Box with SHA-256 deduplication."""
-    original, safe_name = _safe_library_filename(filename or request.headers.get("x-filename", ""))
+    requested_filename = filename or request.headers.get("x-filename", "")
+    try:
+        original_filename, _ = safe_library_filename(requested_filename)
+    except LibraryIntakeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     content_type = str(request.headers.get("content-type") or "application/octet-stream").split(";", 1)[0][:200]
     content_length = request.headers.get("content-length")
     if content_length:
@@ -9686,73 +9686,41 @@ async def api_library_inbox_upload(request: Request, filename: str = "") -> dict
                 raise HTTPException(status_code=413, detail="Library files are limited to 100 MB each.")
         except ValueError:
             pass
-
-    inbox = library_inbox_root()
-    inbox.mkdir(parents=True, exist_ok=True)
-    temp_path = inbox / f".incoming-{time.time_ns()}"
-    hasher = hashlib.sha256()
-    size = 0
     try:
-        with temp_path.open("wb") as handle:
+        with IncomingFileStager(
+            library_inbox_root(),
+            filename=original_filename,
+            max_bytes=MAX_LIBRARY_UPLOAD_BYTES,
+        ) as stager:
             async for chunk in request.stream():
-                if not chunk:
-                    continue
-                size += len(chunk)
-                if size > MAX_LIBRARY_UPLOAD_BYTES:
-                    raise HTTPException(status_code=413, detail="Library files are limited to 100 MB each.")
-                hasher.update(chunk)
-                handle.write(chunk)
-        if size <= 0:
-            raise HTTPException(status_code=400, detail="The uploaded file is empty.")
-        digest = hasher.hexdigest()
+                stager.write(chunk)
+            staged = stager.finish()
         with db() as conn:
-            duplicate = conn.execute(
-                "SELECT id,original_filename,status FROM library_inbox WHERE sha256=?", (digest,)
-            ).fetchone()
-            if duplicate:
-                temp_path.unlink(missing_ok=True)
-                return {
-                    "status":"duplicate",
-                    "inbox_id":int(duplicate["id"]),
-                    "original_filename":duplicate["original_filename"],
-                    "inbox_status":duplicate["status"],
-                    "sha256":digest,
-                    "additional_ai_calls":0,
-                }
+            result = register_staged_incoming(
+                conn,
+                staged,
+                database_root=DB_PATH.parent,
+                mime_type=content_type,
+                source_kind="upload",
+                created_by="Human",
+                received_at=utc_now(),
+            )
+            if result["status"] == "received":
+                log(conn, "library", "Human", f"Added incoming Library material: {result['original_filename']}")
+    except LibraryIntakeError as exc:
+        status_code = 413 if exc.code == "too_large" else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
-        stored_name = f"{digest[:12]}-{safe_name}"
-        final_path = inbox / stored_name
-        if final_path.exists():
-            stored_name = f"{digest[:20]}-{safe_name}"
-            final_path = inbox / stored_name
-        temp_path.replace(final_path)
-        relative_path = f"library/inbox/{stored_name}"
-        now = utc_now()
-        try:
-            with db() as conn:
-                cur = conn.execute(
-                    """
-                    INSERT INTO library_inbox(original_filename,stored_filename,relative_path,mime_type,size_bytes,sha256,status,source_kind,notes,created_by,received_at,updated_at)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-                    """,
-                    (original,stored_name,relative_path,content_type,size,digest,"Incoming","upload","","Human",now,now),
-                )
-                inbox_id = int(cur.lastrowid)
-                log(conn, "library", "Human", f"Added incoming Library material: {original}")
-        except Exception:
-            final_path.unlink(missing_ok=True)
-            raise
-    except Exception:
-        temp_path.unlink(missing_ok=True)
-        raise
+    if result["status"] == "duplicate":
+        return {**result, "additional_ai_calls": 0}
 
     await hub.broadcast()
     return {
         "status":"received",
-        "inbox_id":inbox_id,
-        "original_filename":original,
-        "size_bytes":size,
-        "sha256":digest,
+        "inbox_id":result["inbox_id"],
+        "original_filename":result["original_filename"],
+        "size_bytes":result["size_bytes"],
+        "sha256":result["sha256"],
         "quarantined":True,
         "cataloged":False,
         "additional_ai_calls":0,

@@ -49,6 +49,7 @@ No `mavis.db` was present in the audited checkout; `library/` and `repository/` 
 - `agents/` implements Chief planning/review/revision, Research, Programs, and deterministic trusted-Library search.
 - `ai/` reads `.env` plus process environment and routes Chief, Research, Programs, and Caretaker requests to configured OpenAI or Gemini providers.
 - `library_indexer.py` extracts text locally from supported PDF, DOCX, PPTX, and XLSX inputs.
+- `library_intake.py` provides framework-neutral filename normalization, bounded stream staging, SHA-256 deduplication, and atomic registration in the quarantined Library inbox. Browser uploads use this shared service; it does not promote or index materials.
 - `weather_provider.py` reads an optional Weather Underground key, uses a personal weather station when available, and falls back to Open-Meteo forecasts.
 - `grant_provider.py` searches the public Grants.gov Search2 API; it does not submit applications.
 - `google_calendar_provider.py` performs manual, read-only OAuth and bounded primary-calendar reads. It returns only Google-owned schedule fields and keeps access tokens in memory.
@@ -58,7 +59,7 @@ No `mavis.db` was present in the audited checkout; `library/` and `repository/` 
 ## Important data flows
 
 1. A user request can become a Chief plan, then an explicit human approval. Approved plans run role workflows, save artifacts, enter final review, and may be archived only after the relevant human gate.
-2. Library files move from inbox to human cataloging before they become trusted Library materials. Local text extraction feeds the SQLite search index; the Librarian searches this trusted local index.
+2. Library files pass through bounded local staging into the quarantined inbox, then move through human cataloging before they become trusted Library materials. Local text extraction feeds the SQLite search index; the Librarian searches this trusted local index. DOCX, PPTX, and XLSX extraction rejects archives that exceed entry-count, individual-entry, cumulative-uncompressed-size, or compression-ratio limits.
 3. Weather refresh optionally queries Weather Underground for the configured station and queries Open-Meteo for forecast data. Results are stored in SQLite and read by the environment UI and Daily Steward.
 4. Phenology observations are stored locally with source and review status. Rose can compare trusted observed/confirmed records by normalized subject and stage across years; suggestions remain excluded until human review and phenology does not feed planning.
 5. Ask the Campus routes some requests to deterministic local handlers; configured AI role calls are recorded in `ai_calls` and guarded by the AI controls. A narrowly matched Rose inventory request reads only titles and recorded material types for `Cataloged` materials in `Active` Library collections. A successful zero-row query is reported as no Cataloged materials in Active collections, while retrieval errors are reported separately; this path makes no AI/network calls or writes and does not receive contribution data.

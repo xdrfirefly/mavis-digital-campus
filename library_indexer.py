@@ -10,6 +10,11 @@ from xml.etree import ElementTree as ET
 
 MAX_INDEX_FILE_BYTES = 50 * 1024 * 1024
 MAX_INDEX_TEXT_CHARS = 300_000
+MAX_OFFICE_ZIP_ENTRIES = 5_000
+MAX_OFFICE_ZIP_TOTAL_BYTES = 128 * 1024 * 1024
+MAX_OFFICE_ZIP_ENTRY_BYTES = 32 * 1024 * 1024
+MAX_OFFICE_ZIP_COMPRESSION_RATIO = 200.0
+MIN_OFFICE_ZIP_RATIO_CHECK_BYTES = 1 * 1024 * 1024
 
 
 def _clean_text(value: str) -> str:
@@ -34,9 +39,46 @@ def _xml_text(data: bytes, tags: set[str] | None = None) -> str:
     return _clean_text("\n".join(parts))
 
 
+def _validate_office_archive(zf: zipfile.ZipFile) -> None:
+    """Reject Office archives that could expand beyond bounded local resources."""
+    entries = zf.infolist()
+    if len(entries) > MAX_OFFICE_ZIP_ENTRIES:
+        raise ValueError(f"Office archive entry count exceeds {MAX_OFFICE_ZIP_ENTRIES}.")
+    total_size = 0
+    for info in entries:
+        if info.is_dir():
+            continue
+        if info.flag_bits & 0x1:
+            raise ValueError("Encrypted Office archive entries are not supported.")
+        if info.file_size > MAX_OFFICE_ZIP_ENTRY_BYTES:
+            raise ValueError(f"Office archive individual entry exceeds {MAX_OFFICE_ZIP_ENTRY_BYTES} bytes.")
+        total_size += info.file_size
+        if total_size > MAX_OFFICE_ZIP_TOTAL_BYTES:
+            raise ValueError(f"Office archive cumulative uncompressed size exceeds {MAX_OFFICE_ZIP_TOTAL_BYTES} bytes.")
+        if info.file_size >= MIN_OFFICE_ZIP_RATIO_CHECK_BYTES:
+            ratio = info.file_size / max(1, info.compress_size)
+            if ratio > MAX_OFFICE_ZIP_COMPRESSION_RATIO:
+                raise ValueError(
+                    f"Office archive compression ratio {ratio:.1f}:1 exceeds the safe limit of "
+                    f"{MAX_OFFICE_ZIP_COMPRESSION_RATIO:.1f}:1."
+                )
+
+
+def _read_office_entry(zf: zipfile.ZipFile, name: str) -> bytes:
+    info = zf.getinfo(name)
+    if info.file_size > MAX_OFFICE_ZIP_ENTRY_BYTES:
+        raise ValueError(f"Office archive individual entry exceeds {MAX_OFFICE_ZIP_ENTRY_BYTES} bytes.")
+    with zf.open(info) as handle:
+        data = handle.read(MAX_OFFICE_ZIP_ENTRY_BYTES + 1)
+    if len(data) > MAX_OFFICE_ZIP_ENTRY_BYTES:
+        raise ValueError(f"Office archive individual entry exceeds {MAX_OFFICE_ZIP_ENTRY_BYTES} bytes.")
+    return data
+
+
 def _extract_docx(path: Path) -> str:
     parts: list[str] = []
     with zipfile.ZipFile(path) as zf:
+        _validate_office_archive(zf)
         names = [
             name for name in zf.namelist()
             if name == "word/document.xml"
@@ -44,7 +86,7 @@ def _extract_docx(path: Path) -> str:
             or name in {"word/footnotes.xml", "word/endnotes.xml", "word/comments.xml"}
         ]
         for name in names:
-            parts.append(_xml_text(zf.read(name), {"t"}))
+            parts.append(_xml_text(_read_office_entry(zf, name), {"t"}))
     return _clean_text("\n\n".join(p for p in parts if p))
 
 
@@ -56,6 +98,7 @@ def _numbered_key(name: str) -> tuple[int, str]:
 def _extract_pptx(path: Path) -> str:
     parts: list[str] = []
     with zipfile.ZipFile(path) as zf:
+        _validate_office_archive(zf)
         slide_names = sorted(
             [n for n in zf.namelist() if re.fullmatch(r"ppt/slides/slide\d+\.xml", n)],
             key=_numbered_key,
@@ -65,11 +108,11 @@ def _extract_pptx(path: Path) -> str:
             key=_numbered_key,
         )
         for name in slide_names:
-            text = _xml_text(zf.read(name), {"t"})
+            text = _xml_text(_read_office_entry(zf, name), {"t"})
             if text:
                 parts.append(text)
         for name in note_names:
-            text = _xml_text(zf.read(name), {"t"})
+            text = _xml_text(_read_office_entry(zf, name), {"t"})
             if text:
                 parts.append("Speaker notes:\n" + text)
     return _clean_text("\n\n".join(parts))
@@ -78,10 +121,11 @@ def _extract_pptx(path: Path) -> str:
 def _extract_xlsx(path: Path) -> str:
     parts: list[str] = []
     with zipfile.ZipFile(path) as zf:
+        _validate_office_archive(zf)
         shared: list[str] = []
         if "xl/sharedStrings.xml" in zf.namelist():
             try:
-                root = ET.fromstring(zf.read("xl/sharedStrings.xml"))
+                root = ET.fromstring(_read_office_entry(zf, "xl/sharedStrings.xml"))
                 for si in root.iter():
                     if si.tag.rsplit("}", 1)[-1] != "si":
                         continue
@@ -95,7 +139,7 @@ def _extract_xlsx(path: Path) -> str:
         )
         for name in sheets:
             try:
-                root = ET.fromstring(zf.read(name))
+                root = ET.fromstring(_read_office_entry(zf, name))
             except ET.ParseError:
                 continue
             values: list[str] = []
