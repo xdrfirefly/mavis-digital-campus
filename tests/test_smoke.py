@@ -8656,3 +8656,245 @@ def test_v099_phase1_office_archive_limits_fail_closed(tmp_path, monkeypatch):
     suspicious_ratio = office_file("ratio.docx", [("word/document.xml", b"A" * 4096)])
     result = indexer.extract_library_text(suspicious_ratio, original_filename=suspicious_ratio.name)
     assert result["status"] == "error" and "compression ratio" in result["error"].lower()
+
+
+def test_v099_phase2_drive_nested_metadata_browse_and_boundary(monkeypatch):
+    import google_drive_provider as provider
+
+    monkeypatch.setattr(provider, "access_token", lambda _root: "memory-token")
+    calls = []
+    metadata = {
+        "rootfolder1": {"id":"rootfolder1","name":"Approved","mimeType":provider.FOLDER_MIME_TYPE,"parents":[],"trashed":False,"capabilities":{"canListChildren":True,"canDownload":False}},
+        "nestedfold1": {"id":"nestedfold1","name":"Nested","mimeType":provider.FOLDER_MIME_TYPE,"parents":["rootfolder1"],"trashed":False,"capabilities":{"canListChildren":True,"canDownload":False}},
+        "deepfile001": {"id":"deepfile001","name":"Notes.txt","mimeType":"text/plain","parents":["nestedfold1"],"trashed":False,"size":"12","modifiedTime":"2026-09-30T12:00:00Z","capabilities":{"canDownload":True}},
+        "outside001": {"id":"outside001","name":"Outside.txt","mimeType":"text/plain","parents":["otherfold01"],"trashed":False,"capabilities":{"canDownload":True}},
+        "otherfold01": {"id":"otherfold01","name":"Other","mimeType":provider.FOLDER_MIME_TYPE,"parents":[],"trashed":False,"capabilities":{"canListChildren":True}},
+        "shortcut01": {"id":"shortcut01","name":"Shortcut","mimeType":provider.SHORTCUT_MIME_TYPE,"parents":["rootfolder1"],"trashed":False,"shortcutDetails":{"targetId":"outside001"},"capabilities":{"canDownload":True}},
+    }
+
+    def response(url, _token, **_kwargs):
+        calls.append(url)
+        if "/about?" in url:
+            return {"user":{"permissionId":"account-one"}}
+        if "/files?" in url:
+            children = [metadata["deepfile001"], metadata["shortcut01"]]
+            children.extend({"id":f"extra{i:04d}","name":f"Extra {i}","mimeType":"text/plain","parents":["nestedfold1"],"trashed":False,"capabilities":{"canDownload":True}} for i in range(120))
+            return {"files": children}
+        item_id = url.split("/files/", 1)[1].split("?", 1)[0]
+        return metadata[item_id]
+
+    monkeypatch.setattr(provider, "_get_json", response)
+    item = provider.get_approved_item_metadata(
+        Path("."), approved_root_id="rootfolder1", account_permission_id="account-one", item_id="deepfile001"
+    )
+    assert item["id"] == "deepfile001" and item["inside_approved_root"] is True
+    assert item["size_bytes"] == 12 and item["download_kind"] == "blob"
+
+    children = provider.list_approved_folder_children(
+        Path("."), approved_root_id="rootfolder1", account_permission_id="account-one", folder_id="nestedfold1"
+    )
+    assert len(children) == provider.MAX_FOLDER_CHILDREN == 100
+    assert children[0]["id"] == "deepfile001"
+    assert all(child["mime_type"] != provider.SHORTCUT_MIME_TYPE for child in children)
+    list_url = next(url for url in calls if "/files?" in url)
+    assert "%27nestedfold1%27+in+parents" in list_url and "pageSize=100" in list_url
+    assert "fullText" not in list_url and "nextPageToken" not in list_url
+
+    for item_id in ("outside001", "shortcut01"):
+        try:
+            provider.get_approved_item_metadata(
+                Path("."), approved_root_id="rootfolder1", account_permission_id="account-one", item_id=item_id
+            )
+            assert False, "unrelated items and shortcuts must fail closed"
+        except provider.GoogleDriveError:
+            pass
+
+    try:
+        provider.get_approved_item_metadata(
+            Path("."), approved_root_id="rootfolder1", account_permission_id="wrong-account", item_id="deepfile001"
+        )
+        assert False, "account mismatch must fail closed"
+    except provider.GoogleDriveError as exc:
+        assert "different account" in str(exc)
+
+
+def test_v099_phase2_drive_parent_depth_and_invalid_root_fail_closed(monkeypatch):
+    import google_drive_provider as provider
+
+    monkeypatch.setattr(provider, "access_token", lambda _root: "memory-token")
+    monkeypatch.setattr(provider, "MAX_PARENT_DEPTH", 2)
+    metadata = {
+        "rootfolder1": {"id":"rootfolder1","name":"Approved","mimeType":provider.FOLDER_MIME_TYPE,"parents":[],"trashed":False,"capabilities":{"canListChildren":True}},
+        "deepfile001": {"id":"deepfile001","name":"Deep","mimeType":"text/plain","parents":["parent0001"],"trashed":False,"capabilities":{"canDownload":True}},
+        "parent0001": {"id":"parent0001","name":"P1","mimeType":provider.FOLDER_MIME_TYPE,"parents":["parent0002"],"trashed":False,"capabilities":{"canListChildren":True}},
+        "parent0002": {"id":"parent0002","name":"P2","mimeType":provider.FOLDER_MIME_TYPE,"parents":["rootfolder1"],"trashed":False,"capabilities":{"canListChildren":True}},
+    }
+
+    def response(url, _token, **_kwargs):
+        if "/about?" in url:
+            return {"user":{"permissionId":"account-one"}}
+        item_id = url.split("/files/", 1)[1].split("?", 1)[0]
+        return metadata[item_id]
+
+    monkeypatch.setattr(provider, "_get_json", response)
+    try:
+        provider.get_approved_item_metadata(
+            Path("."), approved_root_id="rootfolder1", account_permission_id="account-one", item_id="deepfile001"
+        )
+        assert False, "parent depth must be bounded"
+    except provider.GoogleDriveError as exc:
+        assert "depth" in str(exc).lower()
+
+    metadata["rootfolder1"] = {**metadata["rootfolder1"], "trashed": True}
+    try:
+        provider.get_approved_item_metadata(
+            Path("."), approved_root_id="rootfolder1", account_permission_id="account-one", item_id="deepfile001"
+        )
+        assert False, "trashed root must fail closed"
+    except provider.GoogleDriveError as exc:
+        assert "trash" in str(exc).lower()
+
+
+def test_v099_phase2_drive_native_export_mapping_is_deterministic():
+    import google_drive_provider as provider
+
+    expected = {
+        provider.GOOGLE_DOC_MIME_TYPE: ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx"),
+        provider.GOOGLE_SHEET_MIME_TYPE: ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"),
+        provider.GOOGLE_SLIDE_MIME_TYPE: ("application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"),
+        provider.GOOGLE_DRAWING_MIME_TYPE: ("application/pdf", ".pdf"),
+    }
+    for source_mime, (export_mime, extension) in expected.items():
+        mapped = provider.native_export_format(source_mime)
+        assert mapped == {"mime_type":export_mime,"extension":extension}
+    assert provider.SCOPE == "https://www.googleapis.com/auth/drive.file"
+    try:
+        provider.native_export_format("application/vnd.google-apps.form")
+        assert False, "unsupported native types must fail clearly"
+    except provider.GoogleDriveError as exc:
+        assert "not supported" in str(exc).lower()
+
+
+def test_v099_phase2_drive_revoked_refresh_token_requires_reconnect(monkeypatch):
+    import io
+    from urllib.error import HTTPError
+    import google_drive_provider as provider
+
+    body = io.BytesIO(b'{"error":"invalid_grant","error_description":"Token has been expired or revoked."}')
+    monkeypatch.setattr(provider, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        HTTPError(provider.TOKEN_URL, 400, "Bad Request", {}, body)
+    ))
+    try:
+        provider._post_form(provider.TOKEN_URL, {"refresh_token":"secret","client_id":"client"})
+        assert False, "revoked grants must require reconnection"
+    except provider.GoogleDriveError as exc:
+        assert "expired or been revoked" in str(exc).lower()
+        assert "reconnect" in str(exc).lower()
+
+
+def test_v099_phase2_drive_blob_download_and_native_exports(tmp_path, monkeypatch):
+    import google_drive_provider as provider
+
+    captured = []
+
+    class Response:
+        headers = {"Content-Length": "12"}
+        def __init__(self):
+            self.parts = [b"Mavis ", b"content", b""]
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return None
+        def read(self, _size):
+            return self.parts.pop(0)
+
+    def open_url(request, timeout):
+        captured.append((request.full_url, timeout))
+        return Response()
+
+    monkeypatch.setattr(provider, "urlopen", open_url)
+    base = {"id":"deepfile001","name":"Notes","inside_approved_root":True,"can_download":True,"size_bytes":12}
+
+    monkeypatch.setattr(provider, "_approved_item_context", lambda *_args, **_kwargs: ("memory-token", {**base,"mime_type":"text/plain","download_kind":"blob","local_name":"Notes"}))
+    blob_path = tmp_path / "blob.txt"
+    blob = provider.download_approved_item(
+        Path("."), approved_root_id="rootfolder1", account_permission_id="account-one",
+        item_id="deepfile001", destination=blob_path, max_bytes=64,
+    )
+    assert blob_path.read_bytes() == b"Mavis content" and blob["size_bytes"] == 13
+    assert "alt=media" in captured[-1][0] and "/export?" not in captured[-1][0]
+
+    for source_mime, expected_fragment in (
+        (provider.GOOGLE_DOC_MIME_TYPE, "wordprocessingml.document"),
+        (provider.GOOGLE_SHEET_MIME_TYPE, "spreadsheetml.sheet"),
+        (provider.GOOGLE_SLIDE_MIME_TYPE, "presentationml.presentation"),
+        (provider.GOOGLE_DRAWING_MIME_TYPE, "application%2Fpdf"),
+    ):
+        mapped = provider.native_export_format(source_mime)
+        monkeypatch.setattr(provider, "_approved_item_context", lambda *_args, _mime=source_mime, _mapped=mapped, **_kwargs: (
+            "memory-token", {**base,"mime_type":_mime,"size_bytes":None,"download_kind":"export","export_mime_type":_mapped["mime_type"],"export_extension":_mapped["extension"],"local_name":"Native"+_mapped["extension"]}
+        ))
+        destination = tmp_path / ("native" + mapped["extension"])
+        provider.download_approved_item(
+            Path("."), approved_root_id="rootfolder1", account_permission_id="account-one",
+            item_id="deepfile001", destination=destination, max_bytes=64,
+        )
+        assert destination.read_bytes() == b"Mavis content"
+        assert "/export?" in captured[-1][0] and expected_fragment in captured[-1][0]
+
+
+def test_v099_phase2_drive_download_restrictions_size_timeout_and_cleanup(tmp_path, monkeypatch):
+    from urllib.error import HTTPError
+    import google_drive_provider as provider
+
+    restricted = {"id":"deepfile001","name":"Restricted.pdf","mime_type":"application/pdf","inside_approved_root":True,"can_download":False,"size_bytes":10,"download_kind":"blob","local_name":"Restricted.pdf"}
+    monkeypatch.setattr(provider, "_approved_item_context", lambda *_args, **_kwargs: ("memory-token", restricted))
+    destination = tmp_path / "restricted.pdf"
+    try:
+        provider.download_approved_item(Path("."), approved_root_id="rootfolder1", account_permission_id="account-one", item_id="deepfile001", destination=destination, max_bytes=64)
+        assert False, "download restrictions must fail closed"
+    except provider.GoogleDriveError as exc:
+        assert "download" in str(exc).lower()
+    assert not destination.exists() and not list(tmp_path.glob(".*.drive-*.tmp"))
+
+    allowed = {**restricted,"can_download":True,"size_bytes":None}
+    monkeypatch.setattr(provider, "_approved_item_context", lambda *_args, **_kwargs: ("memory-token", allowed))
+
+    class OversizedResponse:
+        headers = {}
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def read(self, _size): return b"x" * 8
+
+    monkeypatch.setattr(provider, "urlopen", lambda *_args, **_kwargs: OversizedResponse())
+    try:
+        provider.download_approved_item(Path("."), approved_root_id="rootfolder1", account_permission_id="account-one", item_id="deepfile001", destination=destination, max_bytes=4)
+        assert False, "streamed size must be enforced"
+    except provider.GoogleDriveError as exc:
+        assert "size limit" in str(exc).lower()
+    assert not destination.exists() and not list(tmp_path.glob(".*.drive-*.tmp"))
+
+    class TimeoutResponse:
+        headers = {}
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def read(self, _size): raise TimeoutError("timed out")
+
+    monkeypatch.setattr(provider, "urlopen", lambda *_args, **_kwargs: TimeoutResponse())
+    try:
+        provider.download_approved_item(Path("."), approved_root_id="rootfolder1", account_permission_id="account-one", item_id="deepfile001", destination=destination, max_bytes=64)
+        assert False, "timeout must fail cleanly"
+    except provider.GoogleDriveError as exc:
+        assert "reached" in str(exc).lower()
+    assert not destination.exists() and not list(tmp_path.glob(".*.drive-*.tmp"))
+
+    def http_failure(*_args, **_kwargs):
+        raise HTTPError("https://www.googleapis.com/drive/v3/files/deepfile001", 503, "Unavailable", {}, None)
+
+    monkeypatch.setattr(provider, "urlopen", http_failure)
+    try:
+        provider.download_approved_item(Path("."), approved_root_id="rootfolder1", account_permission_id="account-one", item_id="deepfile001", destination=destination, max_bytes=64)
+        assert False, "HTTP failure must fail cleanly"
+    except provider.GoogleDriveError as exc:
+        assert "http 503" in str(exc).lower()
+    assert not destination.exists() and not list(tmp_path.glob(".*.drive-*.tmp"))

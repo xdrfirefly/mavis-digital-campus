@@ -53,7 +53,7 @@ No `mavis.db` was present in the audited checkout; `library/` and `repository/` 
 - `weather_provider.py` reads an optional Weather Underground key, uses a personal weather station when available, and falls back to Open-Meteo forecasts.
 - `grant_provider.py` searches the public Grants.gov Search2 API; it does not submit applications.
 - `google_calendar_provider.py` performs manual, read-only OAuth and bounded primary-calendar reads. It returns only Google-owned schedule fields and keeps access tokens in memory.
-- `google_drive_provider.py` performs separate `drive.file` OAuth with PKCE, validates one explicitly selected root/account binding, and exposes only root verification and a bounded immediate-child listing. It does not download, upload, index, or search Drive generally.
+- `google_drive_provider.py` performs separate `drive.file` OAuth with PKCE and validates one explicitly selected root/account binding. Its v0.9.9 preparation layer can retrieve authoritative metadata, verify bounded ancestry to that root, list one verified folder level, stream bounded ordinary-file downloads, and export supported Google-native files to deterministic local formats. These capabilities are provider-only: current application routes still expose root verification and immediate-root metadata listing, with no Library import, upload, write-back, global search, recursive enumeration, background synchronization, or AI access.
 - `upgrade_helper.py` powers the provided import/backup/restore scripts.
 
 ## Important data flows

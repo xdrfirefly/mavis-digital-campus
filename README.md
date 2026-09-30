@@ -18,6 +18,10 @@ Mavis Digital Campus v0.9.8 adds a narrowly scoped Google Drive foundation while
 
 Development preparation for the next bounded Drive-to-Library phase factors the existing browser-upload intake path into a reusable, framework-neutral Library quarantine service. Browser uploads still stop in Incoming Materials and still require human Cataloging Desk approval before local indexing or Rose retrieval. DOCX, PPTX, and XLSX extraction now rejects archives with excessive entry counts, individual or cumulative expansion, encrypted entries, or suspicious compression ratios. This phase adds no Drive browsing, downloads, imports, permissions, write-back, synchronization, schema changes, or frontend behavior.
 
+### v0.9.9 Phase 2 preparation
+
+The provider layer can now retrieve authoritative Drive item metadata, prove bounded parent ancestry to the approved root, list one verified folder level at a time, stream ordinary files with hard size limits, and export Google Docs, Sheets, Slides, and Drawings deterministically to DOCX, XLSX, PPTX, and PDF. Every provider operation revalidates the bound account and approved root; trashed items, shortcuts, unrelated IDs, excessive parent depth, download restrictions, unsupported Google-native types, and failed or oversized streams fail closed. The OAuth scope remains `drive.file`. No routes, Drive browser, Library imports, schema fields, background work, write-back, uploads, deletes, or AI access are added in this phase. Live nested-descendant behavior still requires verification after reconnecting the locally expired/revoked Drive grant.
+
 ### Ambient staff movement
 
 - Available staff now occasionally wander a short distance around their current/home area.
