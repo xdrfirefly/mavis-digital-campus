@@ -101,6 +101,11 @@ def register_staged_incoming(
     created_by: str,
     received_at: str,
     notes: str = "",
+    source_external_id: str | None = None,
+    source_external_root_id: str | None = None,
+    source_external_modified_at: str | None = None,
+    source_external_mime_type: str | None = None,
+    source_export_mime_type: str | None = None,
 ) -> dict[str, object]:
     """Commit staged bytes to Library quarantine with the existing SHA-256 contract."""
     final_path: Path | None = None
@@ -125,26 +130,51 @@ def register_staged_incoming(
         relative_path = final_path.relative_to(Path(database_root)).as_posix()
         staged.temp_path.replace(final_path)
         moved = True
-        cur = conn.execute(
-            """
-            INSERT INTO library_inbox(original_filename,stored_filename,relative_path,mime_type,size_bytes,sha256,status,source_kind,notes,created_by,received_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                staged.original_filename,
-                final_path.name,
-                relative_path,
-                str(mime_type or "application/octet-stream")[:200],
-                staged.size_bytes,
-                staged.sha256,
-                "Incoming",
-                str(source_kind or "upload")[:100],
-                str(notes or "")[:2400],
-                str(created_by or "Human")[:160],
-                received_at,
-                received_at,
-            ),
+        provenance = {
+            "source_external_id": str(source_external_id or "")[:300] or None,
+            "source_external_root_id": str(source_external_root_id or "")[:300] or None,
+            "source_external_modified_at": str(source_external_modified_at or "")[:80] or None,
+            "source_external_mime_type": str(source_external_mime_type or "")[:200] or None,
+            "source_export_mime_type": str(source_export_mime_type or "")[:200] or None,
+        }
+        available_columns = {row[1] for row in conn.execute("PRAGMA table_info(library_inbox)").fetchall()}
+        provenance_supported = set(provenance).issubset(available_columns)
+        if any(provenance.values()) and not provenance_supported:
+            raise LibraryIntakeError("schema", "Library inbox provenance columns are not available.")
+        base_values = (
+            staged.original_filename,
+            final_path.name,
+            relative_path,
+            str(mime_type or "application/octet-stream")[:200],
+            staged.size_bytes,
+            staged.sha256,
+            "Incoming",
+            str(source_kind or "upload")[:100],
+            str(notes or "")[:2400],
+            str(created_by or "Human")[:160],
+            received_at,
+            received_at,
         )
+        if provenance_supported:
+            cur = conn.execute(
+                """
+                INSERT INTO library_inbox(
+                    original_filename,stored_filename,relative_path,mime_type,size_bytes,sha256,status,
+                    source_kind,notes,created_by,received_at,updated_at,source_external_id,
+                    source_external_root_id,source_external_modified_at,source_external_mime_type,
+                    source_export_mime_type
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (*base_values, *provenance.values()),
+            )
+        else:
+            cur = conn.execute(
+                """
+                INSERT INTO library_inbox(original_filename,stored_filename,relative_path,mime_type,size_bytes,sha256,status,source_kind,notes,created_by,received_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                base_values,
+            )
     except ValueError as exc:
         staged.temp_path.unlink(missing_ok=True)
         if moved and final_path is not None:

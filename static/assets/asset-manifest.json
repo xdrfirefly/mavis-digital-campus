@@ -1,5 +1,5 @@
 {
-  "build": "v0.9.8",
+  "build": "v0.9.9",
   "runtime_ai": false,
   "canonical_assets": {
     "chief_of_staff": {
@@ -185,7 +185,7 @@
       "enabled": true,
       "workflow_journal_table": "workflow_runs",
       "schema_metadata_table": "schema_meta",
-      "schema_version": "0.9.8",
+      "schema_version": "0.9.9",
       "detect_active_workflow_on_restart": true,
       "explicit_human_retry_required": true,
       "preserve_completed_tasks_on_retry": true,
@@ -357,7 +357,7 @@
     "supersede_with_history": true,
     "active_superseded_memory_sent_to_ai": false
   },
-  "version": "0.9.8",
+  "version": "0.9.9",
   "institutional_playbooks": {
     "enabled": true,
     "table": "playbooks",
@@ -606,7 +606,13 @@
     "approved_root_required": true,
     "immediate_root_listing_only": true,
     "automatic_access": false,
-    "content_download": false,
+    "content_download": true,
+    "explicit_selection_required": true,
+    "nested_folder_chain_approval_required": true,
+    "library_snapshot_import": true,
+    "library_snapshot_quarantined": true,
+    "automatic_sync": false,
+    "drive_writeback": false,
     "library_indexing": false,
     "work_hours_export": false,
     "ai_context": false,

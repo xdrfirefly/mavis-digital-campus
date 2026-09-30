@@ -1,8 +1,8 @@
-# Mavis Digital Campus v0.9.8 — Google Drive Approved-Root Foundation
+# Mavis Digital Campus v0.9.9 — Explicit Drive Library Snapshots
 
-## v0.9.8 focus
+## v0.9.9 focus
 
-Mavis Digital Campus v0.9.8 adds a narrowly scoped Google Drive foundation while preserving the current project, People, contribution, Library, Weather, grants, Calendar, and deterministic planning systems. An operator can connect a separate Drive authorization, explicitly approve one root folder, verify that binding, and list only its immediate contents. The foundation does not download or index Drive content, upload files, export work hours, add Drive data to AI prompts, or grant Rose or Poe new network authority.
+Mavis Digital Campus v0.9.9 adds explicitly selected Google Drive snapshots to Library Incoming Materials while preserving the approved-root boundary and `drive.file` scope. Direct-root files require explicit file approval; nested files also require explicit approval of every otherwise-inaccessible containing folder. Imports are bounded local snapshots, remain quarantined until human catalog approval, are not synchronized or written back to Drive, and are excluded from Rose search and AI context until cataloged through the existing trusted Library workflow.
 
 ### Google Drive foundation
 
@@ -10,9 +10,12 @@ Mavis Digital Campus v0.9.8 adds a narrowly scoped Google Drive foundation while
 - Connect opens Google's folder-selection flow and requires exactly one approved folder.
 - Every verification and listing is bound to the stored root ID and Google account identity.
 - Immediate listing is manual, bounded, and returns metadata only. It never searches the rest of Drive.
+- **Select files from Google Drive** opens Google's Picker rather than an MDC Drive browser. A direct child needs explicit file approval; a nested file also needs explicit approval of each inaccessible containing folder.
+- A final human review is required before bounded download/export. Confirmed files become local `google_drive` snapshots in Incoming Materials with SHA-256 deduplication and source provenance.
+- Snapshots are not synchronized or written back. They remain quarantined and unavailable to Rose until the existing Cataloging Desk approval promotes and indexes them.
 - Drive status stays outside general `/api/state` and WebSocket payloads.
 - `.google-drive-token.json` and Drive OAuth credentials remain local and are excluded from Git, portable backups, and previous-version imports.
-- Rose indexing and Poe work-hour archives remain deliberately deferred.
+- Drive crawling, automatic synchronization, write-back, pre-approval Rose indexing, and Poe work-hour archives remain deliberately deferred.
 
 ### v0.9.9 Phase 1 preparation
 
@@ -20,7 +23,11 @@ Development preparation for the next bounded Drive-to-Library phase factors the 
 
 ### v0.9.9 Phase 2 preparation
 
-The provider layer can now retrieve authoritative Drive item metadata, prove bounded parent ancestry to the approved root, list one verified folder level at a time, stream ordinary files with hard size limits, and export Google Docs, Sheets, Slides, and Drawings deterministically to DOCX, XLSX, PPTX, and PDF. Every provider operation revalidates the bound account and approved root; trashed items, shortcuts, unrelated IDs, excessive parent depth, download restrictions, unsupported Google-native types, and failed or oversized streams fail closed. The OAuth scope remains `drive.file`. No routes, Drive browser, Library imports, schema fields, background work, write-back, uploads, deletes, or AI access are added in this phase. Live nested-descendant behavior still requires verification after reconnecting the locally expired/revoked Drive grant.
+The provider layer retrieves authoritative Drive item metadata, proves bounded parent ancestry to the approved root, lists one verified folder level at a time, streams ordinary files with hard size limits, and exports Google Docs, Sheets, Slides, and Drawings deterministically to DOCX, XLSX, PPTX, and PDF. Every provider operation revalidates the bound account and approved root; trashed items, shortcuts, unrelated IDs, excessive parent depth, download restrictions, unsupported Google-native types, and failed or oversized streams fail closed. The OAuth scope remains `drive.file`.
+
+### v0.9.9 Phase 3
+
+The Library now supports explicit, human-confirmed Drive snapshots without an internal Drive browser. Live testing established that `drive.file` does not inherit subtree access: file selection exposes the file and its parent ID, while a nested parent may require its own explicit Picker approval. The backend repeats this approval step until every authoritative parent is visible and the complete chain reaches the approved root. Batches are limited to 20 files, 100 MiB per ordinary file, 10 MiB per native export, and 500 MiB total, processed sequentially. Imports use the existing Library intake service and stop in Incoming Materials; there is no automatic sync, Drive write-back, direct trusted promotion, pre-approval indexing, or AI access.
 
 ### Ambient staff movement
 
@@ -53,14 +60,14 @@ This release searches **Grants.gov only** for Vernadette's live grant discovery.
 
 The existing **Weather & Seasons** system remains unchanged: personal-weather-station data can be used when authorized, with the regional forecast fallback retained.
 
-Target schema: **0.9.8**.
+Target schema: **0.9.9**.
 
 ## Upgrade
 
-1. Extract v0.9.8 into a new folder.
+1. Extract v0.9.9 into a new folder.
 2. Run `IMPORT DATA FROM PREVIOUS VERSION.bat`.
 3. Point it at your working **v0.9.7** folder.
-4. Start v0.9.8 normally.
+4. Start v0.9.9 normally.
 5. Leave the Campus map open for a minute or two; available staff should occasionally move gently around their home area.
 6. Ask two or three questions. The newest exchange should stay at the top; scroll down inside the response panel to see older ones.
 

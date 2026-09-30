@@ -1,10 +1,10 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
-title Mavis Digital Campus v0.9.8
+title Mavis Digital Campus v0.9.9
 
 echo ===============================================
-echo       MAVIS DIGITAL CAMPUS v0.9.8
+echo       MAVIS DIGITAL CAMPUS v0.9.9
 echo ===============================================
 echo.
 
@@ -70,7 +70,7 @@ if not defined PORT set "PORT=8042"
 
 echo.
 echo [4/5] Local address: http://127.0.0.1:!PORT!/
-if not "!PORT!"=="8000" echo [INFO] Port 8000 is already in use, probably by an older campus window. v0.9.8 will use !PORT! instead.
+if not "!PORT!"=="8000" echo [INFO] Port 8000 is already in use, probably by an older campus window. v0.9.9 will use !PORT! instead.
 echo The browser will open only after THIS version is ready.
 echo Keep this window OPEN while you use the campus.
 echo.

@@ -57,6 +57,7 @@ _ITEM_FIELDS = (
 )
 
 _pending: dict[str, tuple[str, float, str]] = {}
+_selection_pending: dict[str, tuple[str, float, str, str, int]] = {}
 _access_token: str | None = None
 _access_expires_at = 0.0
 
@@ -107,7 +108,7 @@ def _post_form(url: str, values: dict[str, str], timeout: int = DEFAULT_TIMEOUT_
 
 
 def _get_json(url: str, token: str, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict[str, Any]:
-    request = Request(url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": "Mavis-Digital-Campus/0.9.8"})
+    request = Request(url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": "Mavis-Digital-Campus/0.9.9"})
     try:
         with urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed Google endpoint only
             return json.loads(response.read(4_000_000).decode("utf-8"))
@@ -144,6 +145,38 @@ def begin_authorization(redirect_uri: str) -> str:
         "allow_multiple": "false",
     }
     return f"{AUTH_URL}?{urlencode(params)}"
+
+
+def begin_selection_authorization(
+    redirect_uri: str, *, selection_kind: str, max_items: int = 1
+) -> dict[str, str]:
+    """Begin a file/folder grant without changing the approved-root binding."""
+    client_id, _ = credentials()
+    if not client_id:
+        raise GoogleDriveError("Google Drive OAuth credentials are not configured in .env.")
+    kind = str(selection_kind or "").strip().lower()
+    if kind not in {"file", "folder"}:
+        raise GoogleDriveError("Google Drive selection must request files or folders.")
+    bounded_items = 1 if kind == "folder" else max(1, min(int(max_items or 1), 20))
+    state = secrets.token_urlsafe(32)
+    verifier = secrets.token_urlsafe(64)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    _selection_pending[state] = (verifier, time.time() + 600, redirect_uri, kind, bounded_items)
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": SCOPE,
+        "access_type": "offline",
+        "prompt": "consent",
+        "state": state,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "trigger_onepick": "true",
+        "allow_folder_selection": "true" if kind == "folder" else "false",
+        "allow_multiple": "true" if bounded_items > 1 else "false",
+    }
+    return {"authorization_url": f"{AUTH_URL}?{urlencode(params)}", "state": state}
 
 
 def _safe_id(value: str) -> str:
@@ -300,6 +333,60 @@ def _approved_item_context(
     return token, _normalized_item(payload, inside_approved_root=True)
 
 
+def inspect_approved_item_ancestry(
+    root: Path,
+    *,
+    approved_root_id: str,
+    account_permission_id: str,
+    item_id: str,
+) -> dict[str, Any]:
+    """Inspect an item using only authoritative parent metadata.
+
+    A file grant can reveal an authoritative parent ID without granting access to
+    that folder. That state is returned explicitly so the caller can request a
+    separate human folder approval. Fully visible chains outside the approved
+    root still fail closed.
+    """
+    token, folder, _ = _bound_context(
+        root, approved_root_id=approved_root_id, account_permission_id=account_permission_id
+    )
+    root_id = folder["approved_root_id"]
+    payload = _item_payload(token, item_id, root_item=secrets.compare_digest(_safe_id(item_id), root_id))
+    item = _normalized_item(payload, inside_approved_root=False)
+    chain: list[dict[str, Any]] = []
+    current = payload
+    visited: set[str] = set()
+    for _depth in range(MAX_PARENT_DEPTH + 1):
+        current_id = _safe_id(str(current.get("id") or ""))
+        if current_id in visited:
+            raise GoogleDriveError("Google Drive returned a parent cycle while verifying the approved-root boundary.")
+        visited.add(current_id)
+        chain.append(_normalized_item(current, inside_approved_root=secrets.compare_digest(current_id, root_id)))
+        if secrets.compare_digest(current_id, root_id):
+            verified_item = {**item, "inside_approved_root": True}
+            return {"status": "verified", "verified": True, "item": verified_item, "chain": chain}
+        parents = [_safe_id(str(value)) for value in (current.get("parents") or [])]
+        if len(parents) != 1:
+            raise GoogleDriveError("The requested Google Drive item is not a verified descendant of the approved root.")
+        parent_id = parents[0]
+        try:
+            parent = _item_payload(token, parent_id)
+        except GoogleDriveError as exc:
+            if "missing or inaccessible" in str(exc):
+                return {
+                    "status": "additional_folder_approval_required",
+                    "verified": False,
+                    "item": item,
+                    "chain": chain,
+                    "required_parent_id": parent_id,
+                }
+            raise
+        if str(parent.get("mimeType") or "") != FOLDER_MIME_TYPE:
+            raise GoogleDriveError("The requested Google Drive item's parent chain is invalid.")
+        current = parent
+    raise GoogleDriveError(f"Google Drive parent depth exceeds the approved limit of {MAX_PARENT_DEPTH}.")
+
+
 def verify_item_in_approved_root(
     root: Path,
     *,
@@ -357,6 +444,64 @@ def complete_authorization(root: Path, *, state: str, code: str, redirect_uri: s
         pass
     _remember_access(result)
     return binding
+
+
+def complete_selection_authorization(
+    root: Path,
+    *,
+    state: str,
+    code: str,
+    redirect_uri: str,
+    picked_file_ids: str,
+    approved_root_id: str,
+    account_permission_id: str,
+) -> dict[str, Any]:
+    """Complete an explicit file/folder grant without touching root metadata."""
+    pending = _selection_pending.pop(state, None)
+    if not pending or pending[1] < time.time() or not secrets.compare_digest(pending[2], redirect_uri):
+        raise GoogleDriveError("The Google Drive selection request expired or could not be verified.")
+    selection_kind, max_items = pending[3], pending[4]
+    selected = [_safe_id(item.strip()) for item in str(picked_file_ids or "").split(",") if item.strip()]
+    if not selected:
+        raise GoogleDriveError("Select at least one Google Drive item.")
+    if len(selected) > max_items:
+        raise GoogleDriveError(f"Select no more than {max_items} Google Drive item(s).")
+    if len(set(selected)) != len(selected):
+        raise GoogleDriveError("Google Drive returned a duplicate item selection.")
+    client_id, client_secret = credentials()
+    values = {
+        "client_id": client_id,
+        "code": code,
+        "code_verifier": pending[0],
+        "grant_type": "authorization_code",
+        "redirect_uri": redirect_uri,
+    }
+    if client_secret:
+        values["client_secret"] = client_secret
+    result = _post_form(TOKEN_URL, values)
+    refresh_token = str(result.get("refresh_token") or "").strip()
+    access = str(result.get("access_token") or "").strip()
+    if not refresh_token or not access:
+        raise GoogleDriveError("Google did not return offline Drive authorization. Try the selection again.")
+    account = _account(access)
+    if not account_permission_id or not secrets.compare_digest(
+        account["account_permission_id"], str(account_permission_id)
+    ):
+        raise GoogleDriveError("Google Drive selection used a different account. The existing connection was preserved.")
+    _folder(access, approved_root_id)
+    path = token_path(root)
+    temp_path = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+    try:
+        temp_path.write_text(json.dumps({"refresh_token": refresh_token}), encoding="utf-8")
+        try:
+            temp_path.chmod(0o600)
+        except OSError:
+            pass
+        temp_path.replace(path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+    _remember_access(result)
+    return {"selected_ids": selected, "selection_kind": selection_kind}
 
 
 def _remember_access(result: dict[str, Any]) -> str:
@@ -484,7 +629,7 @@ def _stream_download_to_path(
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/octet-stream",
-            "User-Agent": "Mavis-Digital-Campus/0.9.8",
+            "User-Agent": "Mavis-Digital-Campus/0.9.9",
         },
     )
     size = 0

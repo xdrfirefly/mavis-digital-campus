@@ -8373,7 +8373,7 @@ def test_v096_seasonal_context_transparency_ui_and_release_contract():
     js = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
     css = (ROOT / "static/css/app.css").read_text(encoding="utf-8")
     manifest = json.loads((ROOT / "static/assets/asset-manifest.json").read_text(encoding="utf-8"))
-    assert LIVE_VERSION == "0.9.8"
+    assert LIVE_VERSION == "0.9.9"
     assert LIVE_CACHE_KEY == "099"
     assert "Rose’s Seasonal Briefing" in js
     assert "getJson('/api/environment/seasonal-context')" in js
@@ -8775,6 +8775,361 @@ def test_v099_phase2_drive_native_export_mapping_is_deterministic():
         assert "not supported" in str(exc).lower()
 
 
+def test_v099_phase3_ancestry_requires_each_authoritative_parent(monkeypatch):
+    import google_drive_provider as provider
+
+    monkeypatch.setattr(provider, "access_token", lambda _root: "memory-token")
+    visible = {"rootfolder1", "deepfile001"}
+    metadata = {
+        "rootfolder1": {"id":"rootfolder1","name":"Approved","mimeType":provider.FOLDER_MIME_TYPE,"parents":[],"trashed":False,"capabilities":{"canListChildren":True}},
+        "folder0001": {"id":"folder0001","name":"Level one","mimeType":provider.FOLDER_MIME_TYPE,"parents":["rootfolder1"],"trashed":False,"capabilities":{"canListChildren":True}},
+        "folder0002": {"id":"folder0002","name":"Level two","mimeType":provider.FOLDER_MIME_TYPE,"parents":["folder0001"],"trashed":False,"capabilities":{"canListChildren":True}},
+        "deepfile001": {"id":"deepfile001","name":"Nested.txt","mimeType":"text/plain","parents":["folder0002"],"trashed":False,"size":"6","capabilities":{"canDownload":True}},
+        "outside001": {"id":"outside001","name":"Outside.txt","mimeType":"text/plain","parents":["outsidefold1"],"trashed":False,"capabilities":{"canDownload":True}},
+        "outsidefold1": {"id":"outsidefold1","name":"Outside","mimeType":provider.FOLDER_MIME_TYPE,"parents":[],"trashed":False,"capabilities":{"canListChildren":True}},
+    }
+
+    def response(url, _token, **_kwargs):
+        if "/about?" in url:
+            return {"user":{"permissionId":"account-one"}}
+        item_id = url.split("/files/", 1)[1].split("?", 1)[0]
+        if item_id not in visible:
+            raise provider.GoogleDriveError("The requested Google Drive item is missing or inaccessible.")
+        return metadata[item_id]
+
+    monkeypatch.setattr(provider, "_get_json", response)
+    first = provider.inspect_approved_item_ancestry(
+        Path("."), approved_root_id="rootfolder1", account_permission_id="account-one", item_id="deepfile001"
+    )
+    assert first["status"] == "additional_folder_approval_required"
+    assert first["required_parent_id"] == "folder0002" and first["verified"] is False
+
+    visible.add("folder0002")
+    second = provider.inspect_approved_item_ancestry(
+        Path("."), approved_root_id="rootfolder1", account_permission_id="account-one", item_id="deepfile001"
+    )
+    assert second["status"] == "additional_folder_approval_required"
+    assert second["required_parent_id"] == "folder0001"
+
+    visible.add("folder0001")
+    complete = provider.inspect_approved_item_ancestry(
+        Path("."), approved_root_id="rootfolder1", account_permission_id="account-one", item_id="deepfile001"
+    )
+    assert complete["status"] == "verified" and complete["verified"] is True
+    assert [part["id"] for part in complete["chain"]] == ["deepfile001", "folder0002", "folder0001", "rootfolder1"]
+
+    visible.update({"outside001", "outsidefold1"})
+    try:
+        provider.inspect_approved_item_ancestry(
+            Path("."), approved_root_id="rootfolder1", account_permission_id="account-one", item_id="outside001"
+        )
+        assert False, "an unrelated fully visible chain must be rejected"
+    except provider.GoogleDriveError as exc:
+        assert "not a verified descendant" in str(exc)
+
+
+def test_v099_phase3_drive_review_import_is_quarantined_and_sha_authoritative(tmp_path, monkeypatch):
+    import drive_library_import as workflow_module
+
+    old = campus.DB_PATH
+    campus.DB_PATH = tmp_path / "phase3.db"
+    try:
+        campus.init_db()
+        workflow = workflow_module.DriveLibraryWorkflow()
+        inspections = {
+            "directfile1": {
+                "status":"verified", "verified":True,
+                "item":{"id":"directfile1","name":"Notes.txt","local_name":"Notes.txt","mime_type":"text/plain","modified_time":"2026-09-30T12:00:00Z","parents":["rootfolder1"],"kind":"file","can_download":True,"download_kind":"blob","export_mime_type":"","inside_approved_root":True},
+                "chain":[{"id":"directfile1"},{"id":"rootfolder1"}],
+            },
+            "docfile001": {
+                "status":"verified", "verified":True,
+                "item":{"id":"docfile001","name":"Class Notes","local_name":"Class Notes.docx","mime_type":"application/vnd.google-apps.document","modified_time":"2026-09-30T12:01:00Z","parents":["rootfolder1"],"kind":"file","can_download":True,"download_kind":"export","export_mime_type":"application/vnd.openxmlformats-officedocument.wordprocessingml.document","inside_approved_root":True},
+                "chain":[{"id":"docfile001"},{"id":"rootfolder1"}],
+            },
+        }
+        monkeypatch.setattr(workflow_module, "inspect_approved_item_ancestry", lambda *_a, item_id, **_k: inspections[item_id])
+
+        payloads = {"directfile1": b"first snapshot", "docfile001": b"docx snapshot"}
+        def download(_root, *, item_id, destination, **_kwargs):
+            data = payloads[item_id]
+            Path(destination).write_bytes(data)
+            item = inspections[item_id]["item"]
+            return {"id":item_id,"name":item["name"],"local_name":item["local_name"],"size_bytes":len(data),"download_kind":item["download_kind"],"export_mime_type":item["export_mime_type"],"inside_approved_root":True}
+        monkeypatch.setattr(workflow_module, "download_approved_item", download)
+
+        review = workflow.create_review(
+            root=tmp_path, approved_root_id="rootfolder1", account_permission_id="account-one",
+            item_ids=["directfile1", "docfile001"],
+        )
+        assert review["status"] == "ready" and len(review["items"]) == 2
+        with campus.db() as conn:
+            imported = workflow.import_review(
+                conn, review_id=review["review_id"], root=tmp_path,
+                inbox_root=campus.library_inbox_root(), database_root=tmp_path,
+                approved_root_id="rootfolder1", account_permission_id="account-one",
+                received_at="2026-09-30T12:05:00+00:00", confirmed=True,
+            )
+        assert [item["status"] for item in imported["results"]] == ["received", "received"]
+        with campus.db() as conn:
+            inbox = conn.execute("SELECT * FROM library_inbox ORDER BY id").fetchall()
+            assert len(inbox) == 2
+            assert all(row["status"] == "Incoming" and row["source_kind"] == "google_drive" for row in inbox)
+            assert inbox[0]["source_external_id"] == "directfile1"
+            assert inbox[0]["source_external_root_id"] == "rootfolder1"
+            assert inbox[0]["source_external_mime_type"] == "text/plain"
+            assert inbox[1]["source_export_mime_type"].endswith("wordprocessingml.document")
+            assert conn.execute("SELECT COUNT(*) FROM library_materials").fetchone()[0] == 0
+            assert conn.execute("SELECT COUNT(*) FROM library_material_index").fetchone()[0] == 0
+
+        duplicate_review = workflow.create_review(
+            root=tmp_path, approved_root_id="rootfolder1", account_permission_id="account-one",
+            item_ids=["directfile1"],
+        )
+        with campus.db() as conn:
+            duplicate = workflow.import_review(
+                conn, review_id=duplicate_review["review_id"], root=tmp_path,
+                inbox_root=campus.library_inbox_root(), database_root=tmp_path,
+                approved_root_id="rootfolder1", account_permission_id="account-one",
+                received_at="2026-09-30T12:06:00+00:00", confirmed=True,
+            )
+            assert duplicate["results"][0]["status"] == "duplicate"
+            assert conn.execute("SELECT COUNT(*) FROM library_inbox").fetchone()[0] == 2
+
+        payloads["directfile1"] = b"updated snapshot bytes"
+        inspections["directfile1"]["item"]["modified_time"] = "2026-09-30T13:00:00Z"
+        updated_review = workflow.create_review(
+            root=tmp_path, approved_root_id="rootfolder1", account_permission_id="account-one",
+            item_ids=["directfile1"],
+        )
+        with campus.db() as conn:
+            updated = workflow.import_review(
+                conn, review_id=updated_review["review_id"], root=tmp_path,
+                inbox_root=campus.library_inbox_root(), database_root=tmp_path,
+                approved_root_id="rootfolder1", account_permission_id="account-one",
+                received_at="2026-09-30T13:05:00+00:00", confirmed=True,
+            )
+            assert updated["results"][0]["status"] == "received"
+            assert conn.execute("SELECT COUNT(*) FROM library_inbox").fetchone()[0] == 3
+    finally:
+        campus.DB_PATH = old
+
+
+def test_v099_phase3_migration_state_and_selection_boundaries(tmp_path, monkeypatch):
+    import sqlite3
+    import drive_library_import as workflow_module
+
+    old = campus.DB_PATH
+    path = tmp_path / "legacy-library.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute("""CREATE TABLE library_inbox(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, original_filename TEXT NOT NULL,
+            stored_filename TEXT NOT NULL, relative_path TEXT NOT NULL UNIQUE,
+            mime_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, sha256 TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL, source_kind TEXT NOT NULL, notes TEXT NOT NULL,
+            created_by TEXT NOT NULL, received_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        )""")
+        conn.execute("INSERT INTO library_inbox(original_filename,stored_filename,relative_path,mime_type,size_bytes,sha256,status,source_kind,notes,created_by,received_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                     ("legacy.txt","legacy.txt","library/inbox/legacy.txt","text/plain",6,"a"*64,"Incoming","upload","kept","Human","2026-01-01","2026-01-01"))
+    campus.DB_PATH = path
+    try:
+        campus.init_db()
+        with campus.db() as conn:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(library_inbox)")}
+            assert {"source_external_id","source_external_root_id","source_external_modified_at","source_external_mime_type","source_export_mime_type"}.issubset(columns)
+            assert tuple(conn.execute("SELECT original_filename,notes FROM library_inbox WHERE id=1").fetchone()) == ("legacy.txt", "kept")
+            now = campus.utc_now()
+            conn.execute("INSERT INTO library_inbox(original_filename,stored_filename,relative_path,mime_type,size_bytes,sha256,status,source_kind,notes,created_by,received_at,updated_at,source_external_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                         ("drive-secret.txt","drive.txt","library/inbox/drive.txt","text/plain",5,"b"*64,"Incoming","google_drive","","Human",now,now,"private-drive-id"))
+        shared = campus.current_state()
+        assert all(item["source_kind"] != "google_drive" for item in shared["library_inbox"])
+        assert "private-drive-id" not in str(shared) and "drive-secret.txt" not in str(shared)
+        with campus.db() as conn:
+            prompts = [campus._campus_advisor_prompt(agent, "ordinary question", conn) for agent in ("stella","percy","rose","stewart")]
+        assert all("private-drive-id" not in prompt and "drive-secret.txt" not in prompt for prompt in prompts)
+
+        class Socket:
+            def __init__(self): self.payload = None
+            async def accept(self): return None
+            async def send_json(self, payload): self.payload = payload
+        socket = Socket()
+        asyncio.run(campus.Hub().connect(socket))
+        assert "private-drive-id" not in str(socket.payload) and "drive-secret.txt" not in str(socket.payload)
+
+        source = (ROOT / "app.py").read_text(encoding="utf-8")
+        callback_body = source.split("async def api_google_drive_library_callback", 1)[1].split("\n\n", 1)[0]
+        assert "UPDATE drive_connection_state" not in callback_body
+        assert workflow_module.MAX_DRIVE_SELECTION_FILES == 20
+        assert workflow_module.MAX_DRIVE_BATCH_BYTES == 500 * 1024 * 1024
+    finally:
+        campus.DB_PATH = old
+
+
+def test_v099_phase3_ui_and_security_contracts_remain_explicit():
+    import inspect
+    import drive_library_import as workflow_module
+
+    js = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
+    app_source = (ROOT / "app.py").read_text(encoding="utf-8")
+    intake_source = inspect.getsource(campus.api_library_inbox_upload)
+    workflow_source = (ROOT / "drive_library_import.py").read_text(encoding="utf-8")
+    assert "Select files from Google Drive" in js
+    for phrase in ("Google Drive snapshot", "local snapshot", "not synchronized", "not searchable by Rose until catalog approval"):
+        assert phrase in js
+    assert "data-google-drive-library-import" in js
+    assert "/api/drive/google/library-selection" in js
+    assert "IncomingFileStager" in intake_source and "register_staged_incoming" in intake_source
+    assert "library_materials" not in workflow_source and "library_material_index" not in workflow_source
+    assert "drive.readonly" not in workflow_source and "drive.readonly" not in app_source
+    assert "source_external_id" not in (ROOT / "agents/librarian.py").read_text(encoding="utf-8")
+    assert "source_external_id" not in (ROOT / "agents/research.py").read_text(encoding="utf-8")
+    assert "source_external_id" not in (ROOT / "agents/programs.py").read_text(encoding="utf-8")
+
+
+def test_v099_phase3_selection_oauth_is_separate_bounded_and_scope_stable(tmp_path, monkeypatch):
+    from urllib.parse import parse_qs, urlparse
+    import google_drive_provider as provider
+
+    monkeypatch.setattr(provider, "combined_environment", lambda: {
+        "GOOGLE_DRIVE_CLIENT_ID":"drive-client", "GOOGLE_DRIVE_CLIENT_SECRET":"drive-secret"
+    })
+    monkeypatch.setattr(provider, "_post_form", lambda *_a, **_k: {
+        "refresh_token":"selection-refresh", "access_token":"selection-access", "expires_in":3600
+    })
+    def metadata(url, _token, **_kwargs):
+        if "/about?" in url:
+            return {"user":{"permissionId":"account-one"}}
+        return {"id":"rootfolder1","name":"Approved","mimeType":provider.FOLDER_MIME_TYPE,"trashed":False,"capabilities":{"canListChildren":True}}
+    monkeypatch.setattr(provider, "_get_json", metadata)
+    redirect = "http://127.0.0.1:8000/api/drive/google/library-callback"
+    started = provider.begin_selection_authorization(redirect, selection_kind="file", max_items=20)
+    query = parse_qs(urlparse(started["authorization_url"]).query)
+    assert query["scope"] == [provider.SCOPE]
+    assert query["allow_multiple"] == ["true"] and query["allow_folder_selection"] == ["false"]
+    completed = provider.complete_selection_authorization(
+        tmp_path, state=started["state"], code="code", redirect_uri=redirect,
+        picked_file_ids="directfile1,docfile001", approved_root_id="rootfolder1",
+        account_permission_id="account-one",
+    )
+    assert completed == {"selected_ids":["directfile1","docfile001"],"selection_kind":"file"}
+    assert "selection-refresh" in (tmp_path / provider.TOKEN_FILENAME).read_text(encoding="utf-8")
+
+    folder = provider.begin_selection_authorization(redirect, selection_kind="folder", max_items=20)
+    folder_query = parse_qs(urlparse(folder["authorization_url"]).query)
+    assert folder_query["allow_multiple"] == ["false"] and folder_query["allow_folder_selection"] == ["true"]
+    try:
+        provider.complete_selection_authorization(
+            tmp_path, state=folder["state"], code="code", redirect_uri=redirect,
+            picked_file_ids="folder0001,folder0002", approved_root_id="rootfolder1",
+            account_permission_id="account-one",
+        )
+        assert False, "folder approval must accept exactly one selected folder"
+    except provider.GoogleDriveError as exc:
+        assert "no more than 1" in str(exc)
+
+    (tmp_path / provider.TOKEN_FILENAME).write_text('{"refresh_token":"preserved-refresh"}', encoding="utf-8")
+    wrong_account = provider.begin_selection_authorization(redirect, selection_kind="file", max_items=1)
+    monkeypatch.setattr(provider, "_get_json", lambda url, _token, **_kwargs: (
+        {"user":{"permissionId":"different-account"}} if "/about?" in url else metadata(url, _token)
+    ))
+    try:
+        provider.complete_selection_authorization(
+            tmp_path, state=wrong_account["state"], code="code", redirect_uri=redirect,
+            picked_file_ids="directfile1", approved_root_id="rootfolder1",
+            account_permission_id="account-one",
+        )
+        assert False, "a different account must not replace the stored refresh token"
+    except provider.GoogleDriveError as exc:
+        assert "different account" in str(exc).lower()
+    assert "preserved-refresh" in (tmp_path / provider.TOKEN_FILENAME).read_text(encoding="utf-8")
+
+
+def test_v099_phase3_review_rejects_unsafe_or_unsupported_items(monkeypatch):
+    import drive_library_import as workflow_module
+    import google_drive_provider as provider
+
+    base = {
+        "verified":True, "status":"verified", "chain":[],
+        "item":{"id":"item000001","name":"Item","local_name":"Item","mime_type":"application/pdf","modified_time":"","parents":["rootfolder1"],"kind":"file","can_download":True,"download_kind":"blob","export_mime_type":"","inside_approved_root":True},
+    }
+    cases = {
+        "folder0001": {**base, "item":{**base["item"], "kind":"folder", "download_kind":"none"}},
+        "disabled001": {**base, "item":{**base["item"], "can_download":False}},
+        "native0001": {**base, "item":{**base["item"], "mime_type":"application/vnd.google-apps.form", "download_kind":"unsupported"}},
+    }
+    errors = {
+        "shortcut01": provider.GoogleDriveError("Google Drive shortcuts are not allowed inside the approved-root boundary."),
+        "trashed001": provider.GoogleDriveError("The requested Google Drive item is in the trash."),
+        "outside001": provider.GoogleDriveError("The requested Google Drive item is not a verified descendant of the approved root."),
+    }
+    def inspect(*_a, item_id, **_k):
+        if item_id in errors:
+            raise errors[item_id]
+        return cases[item_id]
+    monkeypatch.setattr(workflow_module, "inspect_approved_item_ancestry", inspect)
+    review = workflow_module.DriveLibraryWorkflow().create_review(
+        root=Path("."), approved_root_id="rootfolder1", account_permission_id="account-one",
+        item_ids=list(cases) + list(errors),
+    )
+    assert review["status"] == "rejected"
+    assert all(item["status"] == "rejected" for item in review["items"])
+    messages = " ".join(item["message"].lower() for item in review["items"])
+    for marker in ("folders cannot", "does not permit", "not supported", "shortcuts", "trash", "not a verified descendant"):
+        assert marker in messages
+
+
+def test_v099_phase3_explicit_parent_approval_refreshes_review_without_root_mutation(monkeypatch):
+    import drive_library_import as workflow_module
+
+    workflow = workflow_module.DriveLibraryWorkflow()
+    visibility = {"parent": False}
+    def inspect(*_a, item_id, **_k):
+        if item_id == "nestedfile1":
+            item = {"id":item_id,"name":"Nested.txt","local_name":"Nested.txt","mime_type":"text/plain","modified_time":"","parents":["nestedfold1"],"kind":"file","can_download":True,"download_kind":"blob","export_mime_type":"","inside_approved_root":visibility["parent"]}
+            return {"status":"verified","verified":True,"item":item,"chain":[]} if visibility["parent"] else {"status":"additional_folder_approval_required","verified":False,"item":item,"chain":[],"required_parent_id":"nestedfold1"}
+        assert item_id == "nestedfold1"
+        return {"status":"verified","verified":True,"item":{"id":item_id,"kind":"folder"},"chain":[]}
+    monkeypatch.setattr(workflow_module, "inspect_approved_item_ancestry", inspect)
+    review = workflow.create_review(root=Path("."), approved_root_id="rootfolder1", account_permission_id="account-one", item_ids=["nestedfile1"])
+    item_key = review["items"][0]["item_key"]
+    monkeypatch.setattr(workflow_module, "begin_selection_authorization", lambda *_a, **_k: {"authorization_url":"https://example.test/select","state":"oauth-state"})
+    started = workflow.start_parent_selection(root=Path("."), redirect_uri="http://localhost/callback", review_id=review["review_id"], item_key=item_key)
+    monkeypatch.setattr(workflow_module, "complete_selection_authorization", lambda *_a, **_k: {"selected_ids":["nestedfold1"],"selection_kind":"folder"})
+    visibility["parent"] = True
+    completed = workflow.complete_authorization(
+        state="oauth-state", code="code", redirect_uri="http://localhost/callback",
+        picked_file_ids="nestedfold1", current_approved_root_id="rootfolder1",
+        current_account_permission_id="account-one",
+    )
+    assert completed["selection_id"] == started["selection_id"]
+    assert completed["review"]["status"] == "ready"
+    app_source = (ROOT / "app.py").read_text(encoding="utf-8")
+    callback = app_source.split("async def api_google_drive_library_callback", 1)[1].split("\n\n", 1)[0]
+    assert "UPDATE drive_connection_state" not in callback
+
+
+def test_v099_phase3_selection_callback_cannot_replace_root(tmp_path, monkeypatch):
+    old = campus.DB_PATH
+    campus.DB_PATH = tmp_path / "callback-root.db"
+    try:
+        campus.init_db()
+        with campus.db() as conn:
+            conn.execute("UPDATE drive_connection_state SET approved_root_id='rootfolder1',approved_root_name='Mavis Digital Campus',account_permission_id='account-one' WHERE id=1")
+        monkeypatch.setattr(campus, "google_drive_configured", lambda _root: True)
+        captured = {}
+        monkeypatch.setattr(campus.drive_library_workflow, "complete_authorization", lambda **kwargs: captured.update(kwargs) or {"selection_id":"selection-one","review":{}})
+        class Request:
+            def url_for(self, _name): return "http://127.0.0.1:8000/api/drive/google/library-callback"
+        response = asyncio.run(campus.api_google_drive_library_callback(
+            Request(), state="state-value", code="one-time-code", picked_file_ids="directfile1"
+        ))
+        assert response.status_code == 200
+        assert captured["current_approved_root_id"] == "rootfolder1"
+        with campus.db() as conn:
+            row = conn.execute("SELECT approved_root_id,approved_root_name,account_permission_id FROM drive_connection_state WHERE id=1").fetchone()
+        assert tuple(row) == ("rootfolder1", "Mavis Digital Campus", "account-one")
+    finally:
+        campus.DB_PATH = old
 def test_v099_phase2_drive_revoked_refresh_token_requires_reconnect(monkeypatch):
     import io
     from urllib.error import HTTPError

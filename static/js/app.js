@@ -1,4 +1,4 @@
-// v0.9.8 — Google Drive approved-root foundation.
+// v0.9.9 — explicit Google Drive snapshots into Library quarantine.
 import { worldConfig } from './world-config.js?v=099';
 import { assets, forestPlacements, worldProps } from './world-assets.js?v=099';
 import { createCamera } from './camera.js';
@@ -61,6 +61,11 @@ let libraryEditingId = null;
 let googleDriveStatus = null;
 let googleDriveItems = [];
 let googleDriveLoading = false;
+let libraryInboxItems = null;
+let libraryInboxLoading = false;
+let driveLibraryReview = null;
+let driveLibraryImportResult = null;
+let driveLibrarySelectionTimer = null;
 let grantEditingId = null;
 let calendarEditingId = null;
 let grantDiscoveryResult = null;
@@ -1085,11 +1090,13 @@ function libraryCatalogingForm(item){
   </form>`;
 }
 function libraryInboxCard(item){
+  const provenanceBadge=item.source_kind==='google_drive'?'<span class="memory-meta">Google Drive snapshot</span>':'';
   return `<article class="memory-card library-inbox-card">
     <div class="memory-icon">⇩</div>
     <div class="memory-copy">
       <span class="memory-meta">${esc(item.status||'Incoming')} · ${esc(item.mime_type||'file')}</span>
       <strong>${esc(item.original_filename)}</strong>
+      ${provenanceBadge}
       <p>Quarantined incoming material. Review the original file, classify it, then use the Cataloging Desk below to approve it into the trusted Library.</p>
       <small>${fmtBytes(item.size_bytes)} · Received ${fmtTime(item.received_at,true)} · SHA-256 ${esc(String(item.sha256||'').slice(0,12))}…</small>
       <div class="memory-actions"><a class="button-quiet" href="/api/library/inbox/${item.id}/file" target="_blank" rel="noopener">Open File</a></div>
@@ -1169,19 +1176,32 @@ function googleDriveFoundation(){
   const items=googleDriveItems.map(item=>`<article class="memory-card"><div class="memory-icon">${item.kind==='folder'?'D':'F'}</div><div class="memory-copy"><span class="memory-meta">${esc(item.kind)} · ${esc(item.mime_type)}</span><strong>${esc(item.name)}</strong>${item.modified_time?`<small>Modified ${esc(item.modified_time)}</small>`:''}</div></article>`).join('');
   return `<section class="drawer-section contribution-boundary">
     <div class="section-row"><h4>Google Drive foundation</h4><span>${esc(status)}</span></div>
-    <p>Campus access is restricted to one explicitly approved Drive root. This foundation does not download, index, upload, or send Drive content to AI providers.</p>
+    <p>Campus access is restricted to one explicitly approved Drive root. Only explicitly selected, authoritatively verified files may be downloaded as quarantined local snapshots; there is no synchronization, Drive write-back, automatic indexing, or AI access.</p>
     ${d.approved_root_name?`<p><strong>Approved root:</strong> ${esc(d.approved_root_name)}</p>`:''}
     ${d.last_verification_error?`<p>${esc(d.last_verification_error)}</p>`:''}
     <div class="memory-form-actions">
-      ${d.connected?'<button type="button" data-google-drive-verify>Verify access</button><button type="button" data-google-drive-list>List immediate contents</button><button type="button" data-google-drive-disconnect>Disconnect</button>':'<button type="button" data-google-drive-connect>Connect and select root</button>'}
+      ${d.connected?'<button class="button-primary" type="button" data-google-drive-library-select>Select files from Google Drive</button><button type="button" data-google-drive-verify>Verify access</button><button type="button" data-google-drive-list>List immediate contents</button><button type="button" data-google-drive-disconnect>Disconnect</button>':'<button type="button" data-google-drive-connect>Connect and select root</button>'}
       <button type="button" data-google-drive-status>Refresh status</button>
     </div>
     ${items?`<div class="memory-list">${items}</div>`:''}
+    ${googleDriveImportReview()}
   </section>`;
+}
+function googleDriveImportReview(){
+  const review=driveLibraryReview;
+  if(!review)return '';
+  const cards=(review.items||[]).map(item=>{
+    const conversion=item.download_kind==='export'?`Export to ${esc(item.export_extension||item.export_mime_type||'local format')}`:'Download original bytes';
+    const ancestry=item.ancestry_verified?'Ancestry verified to approved root':item.additional_folder_approval_required?'Additional containing-folder approval required':'Rejected';
+    return `<article class="memory-card"><div class="memory-icon">G</div><div class="memory-copy"><span class="memory-meta">${esc(item.mime_type||'file')} · ${conversion}</span><strong>${esc(item.name||'Selected Drive file')}</strong><p>${esc(ancestry)}. ${esc(item.message||'')}</p>${item.size_bytes!=null?`<small>${fmtBytes(item.size_bytes)}</small>`:''}</div><div class="memory-actions">${item.additional_folder_approval_required?`<button type="button" data-google-drive-parent-approval="${esc(item.item_key)}">Approve containing folder</button>`:''}</div></article>`;
+  }).join('');
+  const ready=!driveLibraryImportResult&&review.status==='ready'&&Number(review.ready_count||0)>0;
+  const result=driveLibraryImportResult?`<p><strong>Import complete.</strong> ${(driveLibraryImportResult.results||[]).map(item=>`${esc(item.name||'File')}: ${esc(item.status)}`).join(' · ')}</p>`:'';
+  return `<div class="library-drive-review"><div class="section-row"><h4>Drive snapshot review</h4><span>${esc(review.status||'pending')}</span></div><p>Final human review is required. Each import is a local snapshot, quarantined, not synchronized, not written back to Drive, and not searchable by Rose until catalog approval.</p><div class="memory-list">${cards}</div>${ready?`<div class="memory-form-actions"><button class="button-primary" type="button" data-google-drive-library-import>Confirm and import to Incoming Materials</button></div>`:''}${result}</div>`;
 }
 function drawerLibrary(){
   const all=state.library_collections||[];
-  const inbox=state.library_inbox||[];
+  const inbox=libraryInboxItems??state.library_inbox??[];
   const materials=state.library_materials||[];
   const q=libraryQuery.trim().toLowerCase();
   const filtered=all.filter(item=>{
@@ -1741,6 +1761,7 @@ function openDrawer(panel,id=null,parent=null){
   if(panel==='environment'&&!seasonalContext&&!seasonalContextError)void loadSeasonalContext();
   if(panel==='people'&&(peopleSubview==='contributions'||personProfileId)&&!contributionLedger&&!contributionLedgerLoading)void loadContributionLedger();
   if(panel==='library'&&!googleDriveStatus&&!googleDriveLoading)void loadGoogleDriveStatus();
+  if(panel==='library'&&libraryInboxItems===null&&!libraryInboxLoading)void loadLibraryInbox();
 
   let kicker='Campus',title='Panel',html='';
   if(panel==='executive'){kicker='Executive';title='What Needs Me';html=drawerExecutive();}
@@ -1938,10 +1959,26 @@ function render(){
 
 async function getJson(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok){let d={};try{d=await r.json();}catch{}throw new Error(d.detail||`Request failed (${r.status})`);}return r.json();}
 async function loadGoogleDriveStatus(){if(googleDriveLoading)return;googleDriveLoading=true;try{googleDriveStatus=await getJson('/api/drive/google/status');}catch(err){toast(err.message);}finally{googleDriveLoading=false;if(activeView.panel==='library'&&!els.drawer.hidden)openDrawer('library');}}
+async function loadLibraryInbox(force=false){if(libraryInboxLoading||(!force&&libraryInboxItems!==null))return;libraryInboxLoading=true;try{const result=await getJson('/api/library/inbox');libraryInboxItems=result.items||[];}catch(err){toast(err.message);}finally{libraryInboxLoading=false;if(activeView.panel==='library'&&!els.drawer.hidden)openDrawer('library');}}
 async function connectGoogleDrive(){try{const result=await post('/api/drive/google/connect',{});window.open(result.authorization_url,'_blank','noopener');toast('Select exactly one Google Drive folder in the new browser tab, then refresh status here.');}catch(err){toast(err.message);}}
 async function verifyGoogleDrive(){try{googleDriveStatus=await post('/api/drive/google/verify',{});toast('Approved Google Drive root verified.');openDrawer('library');}catch(err){toast(err.message);await loadGoogleDriveStatus();}}
 async function listGoogleDriveRoot(){try{const result=await getJson('/api/drive/google/root-children');googleDriveItems=result.items||[];toast(`Listed ${googleDriveItems.length} immediate item(s) inside the approved root.`);openDrawer('library');}catch(err){toast(err.message);}}
 async function disconnectGoogleDrive(){if(!confirm('Disconnect Google Drive and forget the approved root?'))return;try{await post('/api/drive/google/disconnect',{});googleDriveItems=[];googleDriveStatus=null;await loadGoogleDriveStatus();toast('Google Drive disconnected; Calendar was not changed.');}catch(err){toast(err.message);}}
+function pollDriveLibrarySelection(selectionId){
+  if(driveLibrarySelectionTimer)clearTimeout(driveLibrarySelectionTimer);
+  const check=async()=>{try{const result=await getJson(`/api/drive/google/library-selection/${encodeURIComponent(selectionId)}`);if(result.status==='complete'){driveLibraryReview=result.review;driveLibraryImportResult=null;toast('Drive selection ready for review.');openDrawer('library');return;}if(result.status==='error'){toast(result.error||'Drive selection failed.');return;}driveLibrarySelectionTimer=setTimeout(check,1200);}catch(err){toast(err.message);}};
+  driveLibrarySelectionTimer=setTimeout(check,800);
+}
+async function selectDriveLibraryFiles(){try{const result=await post('/api/drive/google/library-selection',{});window.open(result.authorization_url,'_blank','noopener');pollDriveLibrarySelection(result.selection_id);toast('Select up to 20 files in Google Drive, then return here for review.');}catch(err){toast(err.message);}}
+async function approveDriveLibraryParent(itemKey){
+  if(!driveLibraryReview?.review_id)return;
+  try{const result=await post(`/api/drive/google/library-selection/${encodeURIComponent(driveLibraryReview.review_id)}/${encodeURIComponent(itemKey)}/approve-parent`,{});window.open(result.authorization_url,'_blank','noopener');pollDriveLibrarySelection(result.selection_id);toast('Select the exact containing folder requested by Google metadata.');}catch(err){toast(err.message);}
+}
+async function importDriveLibraryReview(){
+  if(!driveLibraryReview?.review_id)return;
+  if(!confirm('Import these files as quarantined local snapshots in Incoming Materials? They will not be synchronized or searchable by Rose until catalog approval.'))return;
+  try{driveLibraryImportResult=await post('/api/drive/google/library-import',{review_id:driveLibraryReview.review_id,confirmed:true});await loadLibraryInbox(true);toast('Drive snapshots added to Incoming Materials.');openDrawer('library');}catch(err){toast(err.message);}
+}
 async function loadSeasonalContext(force=false){
   if(seasonalContextLoading||(!force&&(seasonalContext||seasonalContextError)))return;
   seasonalContextLoading=true;seasonalContextError='';
@@ -2498,7 +2535,7 @@ async function uploadLibraryInbox(form){
     toast(`Library Drop Box: ${received} received${duplicates?` · ${duplicates} duplicate${duplicates===1?'':'s'} skipped`:''}.`);
     openDrawer('library');
   }catch(err){toast(err.message||'Library upload failed.');openDrawer('library');}
-  finally{if(button){button.disabled=false;button.textContent='Add to Incoming Materials';}}
+  finally{libraryInboxItems=null;void loadLibraryInbox(true);if(button){button.disabled=false;button.textContent='Add to Incoming Materials';}}
 }
 
 async function catalogLibraryInbox(form){
@@ -2520,7 +2557,7 @@ async function catalogLibraryInbox(form){
     toast('Approved into the trusted Library.');
     openDrawer('library');
   }catch(err){toast(err.message||'Cataloging failed.');openDrawer('library');}
-  finally{if(button){button.disabled=false;button.textContent='Approve into Trusted Library';}}
+  finally{libraryInboxItems=null;void loadLibraryInbox(true);if(button){button.disabled=false;button.textContent='Approve into Trusted Library';}}
 }
 
 async function saveLibraryCollection(form){
@@ -2815,6 +2852,9 @@ els.drawerBody.addEventListener('click',e=>{
   else if(btn.hasAttribute('data-google-calendar-refresh'))refreshGoogleCalendar();
   else if(btn.hasAttribute('data-google-calendar-disconnect'))disconnectGoogleCalendar();
   else if(btn.hasAttribute('data-google-drive-connect'))connectGoogleDrive();
+  else if(btn.hasAttribute('data-google-drive-library-select'))selectDriveLibraryFiles();
+  else if(btn.dataset.googleDriveParentApproval)approveDriveLibraryParent(btn.dataset.googleDriveParentApproval);
+  else if(btn.hasAttribute('data-google-drive-library-import'))importDriveLibraryReview();
   else if(btn.hasAttribute('data-google-drive-verify'))verifyGoogleDrive();
   else if(btn.hasAttribute('data-google-drive-list'))listGoogleDriveRoot();
   else if(btn.hasAttribute('data-google-drive-disconnect'))disconnectGoogleDrive();

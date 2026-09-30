@@ -66,6 +66,7 @@ from google_drive_provider import (
     list_approved_root_children,
     verify_approved_root,
 )
+from drive_library_import import DriveLibraryImportError, DriveLibraryWorkflow
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "mavis.db"
@@ -83,7 +84,7 @@ OPENAI_LIST_PRICES_PER_MILLION = {
 }
 TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4.0
 DEFAULT_DAILY_ESTIMATED_COST_LIMIT_USD = 1.00
-SCHEMA_VERSION = "0.9.8"
+SCHEMA_VERSION = "0.9.9"
 LIBRARY_MATERIAL_TYPES = ("Lesson Plan", "Instructor Notes", "Worksheet", "Slideshow", "Handout", "Supply List", "Photo", "Video", "Audio", "Document", "Spreadsheet", "Archive", "Reference", "Other")
 PROGRAMS_LIBRARY_DECISIONS = ("reuse", "revise", "create_new")
 GRANT_STATUSES = ("Discovered", "Reviewing", "Pursue", "Preparing", "Submitted", "Awarded", "Declined", "Passed")
@@ -605,7 +606,12 @@ def init_db() -> None:
                 notes TEXT NOT NULL DEFAULT '',
                 created_by TEXT NOT NULL DEFAULT 'Human',
                 received_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                source_external_id TEXT,
+                source_external_root_id TEXT,
+                source_external_modified_at TEXT,
+                source_external_mime_type TEXT,
+                source_export_mime_type TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_library_inbox_status
                 ON library_inbox(status,received_at DESC);
@@ -934,6 +940,15 @@ def init_db() -> None:
             conn.execute("ALTER TABLE library_inbox ADD COLUMN cataloged_material_id INTEGER")
         if "cataloged_at" not in inbox_columns:
             conn.execute("ALTER TABLE library_inbox ADD COLUMN cataloged_at TEXT")
+        for column in (
+            "source_external_id",
+            "source_external_root_id",
+            "source_external_modified_at",
+            "source_external_mime_type",
+            "source_export_mime_type",
+        ):
+            if column not in inbox_columns:
+                conn.execute(f"ALTER TABLE library_inbox ADD COLUMN {column} TEXT")
 
         environment_columns = {row[1] for row in conn.execute("PRAGMA table_info(environment_settings)").fetchall()}
         for column, ddl in {
@@ -1304,19 +1319,23 @@ def library_catalog_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     )
 
 
-def library_inbox_rows(conn: sqlite3.Connection, limit: int = 250) -> list[dict[str, Any]]:
+def library_inbox_rows(
+    conn: sqlite3.Connection, limit: int = 250, *, include_google_drive: bool = True
+) -> list[dict[str, Any]]:
     """Return quarantined incoming Library files. No AI/network access and no Catalog promotion."""
     return rows(
         conn,
         """
         SELECT id,original_filename,stored_filename,relative_path,mime_type,size_bytes,sha256,status,
-               source_kind,notes,created_by,received_at,updated_at,cataloged_material_id,cataloged_at
+               source_kind,notes,created_by,received_at,updated_at,cataloged_material_id,cataloged_at,
+               source_external_id,source_external_root_id,source_external_modified_at,
+               source_external_mime_type,source_export_mime_type
         FROM library_inbox
-        WHERE status='Incoming'
+        WHERE status='Incoming' AND (? OR source_kind!='google_drive')
         ORDER BY received_at DESC,id DESC
         LIMIT ?
         """,
-        (max(1, min(int(limit or 250), 1000)),),
+        (1 if include_google_drive else 0, max(1, min(int(limit or 250), 1000))),
     )
 
 
@@ -2230,7 +2249,10 @@ def system_health(conn: sqlite3.Connection) -> dict[str, Any]:
         {"inbox_id","original_filename","stored_filename","relative_path","mime_type","size_bytes","sha256"} - material_columns
     )
     inbox_columns = {row[1] for row in conn.execute("PRAGMA table_info(library_inbox)").fetchall()}
-    missing_library_inbox_columns = sorted({"cataloged_material_id","cataloged_at"} - inbox_columns)
+    missing_library_inbox_columns = sorted({
+        "cataloged_material_id","cataloged_at","source_external_id","source_external_root_id",
+        "source_external_modified_at","source_external_mime_type","source_export_mime_type",
+    } - inbox_columns)
 
     schema_row = conn.execute(
         "SELECT schema_version,updated_at FROM schema_meta WHERE id=1"
@@ -5891,7 +5913,7 @@ def current_state() -> dict[str, Any]:
             "briefing_snapshots": rows(conn, "SELECT * FROM briefing_snapshots ORDER BY captured_at DESC,id DESC LIMIT 12"),
             "library_collections": library_catalog_rows(conn),
             "library_materials": library_material_rows(conn),
-            "library_inbox": library_inbox_rows(conn),
+            "library_inbox": library_inbox_rows(conn, include_google_drive=False),
             "programs_library_preflights": [
                 _programs_library_preflight_public(row)
                 for row in conn.execute(
@@ -5980,6 +6002,7 @@ class Hub:
 
 
 hub = Hub()
+drive_library_workflow = DriveLibraryWorkflow()
 workflow_task: asyncio.Task | None = None
 chief_plan_lock = asyncio.Lock()
 CHIEF_DUPLICATE_WINDOW_SECONDS = 120
@@ -7457,6 +7480,11 @@ class LibraryCatalogRequest(BaseModel):
     notes: str = ""
 
 
+class DriveLibraryImportRequest(BaseModel):
+    review_id: str
+    confirmed: bool = False
+
+
 class ProgramsLibraryDecisionRequest(BaseModel):
     decision: str
     collection_id: int | None = None
@@ -7694,7 +7722,11 @@ class _GoogleOAuthAccessLogFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if isinstance(record.args, tuple) and len(record.args) >= 3:
             path = str(record.args[2])
-            if path.startswith(("/api/calendar/google/callback?", "/api/drive/google/callback?")):
+            if path.startswith((
+                "/api/calendar/google/callback?",
+                "/api/drive/google/callback?",
+                "/api/drive/google/library-callback?",
+            )):
                 safe_args = list(record.args)
                 safe_args[2] = path.split("?", 1)[0]
                 record.args = tuple(safe_args)
@@ -8565,6 +8597,125 @@ async def api_google_drive_root_children() -> dict[str, Any]:
     except GoogleDriveError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"status":"ok","items":items,"count":len(items),"scope":"approved_root_immediate_children","additional_ai_calls":0}
+
+
+@app.post("/api/drive/google/library-selection")
+async def api_google_drive_library_selection(request: Request) -> dict[str, str]:
+    """Begin explicit file selection without changing the approved-root record."""
+    try:
+        with db() as conn:
+            root_id, account_id = _google_drive_binding(conn)
+        await asyncio.to_thread(
+            verify_approved_root,
+            DB_PATH.parent,
+            approved_root_id=root_id,
+            account_permission_id=account_id,
+        )
+        return drive_library_workflow.start_file_selection(
+            root=DB_PATH.parent,
+            redirect_uri=str(request.url_for("api_google_drive_library_callback")),
+            approved_root_id=root_id,
+            account_permission_id=account_id,
+        )
+    except (GoogleDriveError, DriveLibraryImportError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/drive/google/library-selection/{review_id}/{item_key}/approve-parent")
+async def api_google_drive_library_parent_selection(
+    request: Request, review_id: str, item_key: str
+) -> dict[str, str]:
+    """Begin approval for the server-recorded inaccessible authoritative parent."""
+    try:
+        with db() as conn:
+            root_id, account_id = _google_drive_binding(conn)
+        await asyncio.to_thread(
+            verify_approved_root,
+            DB_PATH.parent,
+            approved_root_id=root_id,
+            account_permission_id=account_id,
+        )
+        return drive_library_workflow.start_parent_selection(
+            root=DB_PATH.parent,
+            redirect_uri=str(request.url_for("api_google_drive_library_callback")),
+            review_id=review_id,
+            item_key=item_key,
+        )
+    except (GoogleDriveError, DriveLibraryImportError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/drive/google/library-callback", response_class=HTMLResponse)
+async def api_google_drive_library_callback(
+    request: Request,
+    state: str = "",
+    code: str = "",
+    picked_file_ids: str = "",
+    error: str = "",
+) -> HTMLResponse:
+    """Complete file/folder grants without updating drive_connection_state."""
+    if error or not state or not code or not picked_file_ids:
+        raise HTTPException(status_code=400, detail="Google Drive selection was cancelled or incomplete.")
+    try:
+        with db() as conn:
+            root_id, account_id = _google_drive_binding(conn)
+        drive_library_workflow.complete_authorization(
+            state=state,
+            code=code,
+            redirect_uri=str(request.url_for("api_google_drive_library_callback")),
+            picked_file_ids=picked_file_ids,
+            current_approved_root_id=root_id,
+            current_account_permission_id=account_id,
+        )
+    except (GoogleDriveError, DriveLibraryImportError) as exc:
+        return HTMLResponse(
+            "<p>Google Drive selection could not be verified. Return to Mavis Digital Campus for details.</p>",
+            status_code=400,
+        )
+    return HTMLResponse(
+        "<p>Google Drive selection received. This window may be closed.</p>"
+        "<script>window.setTimeout(()=>window.close(),500);</script>"
+    )
+
+
+@app.get("/api/drive/google/library-selection/{selection_id}")
+async def api_google_drive_library_selection_status(selection_id: str) -> dict[str, Any]:
+    try:
+        return drive_library_workflow.selection_status(selection_id)
+    except DriveLibraryImportError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/drive/google/library-review/{review_id}")
+async def api_google_drive_library_review(review_id: str) -> dict[str, Any]:
+    try:
+        return drive_library_workflow.get_review(review_id)
+    except DriveLibraryImportError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/drive/google/library-import")
+async def api_google_drive_library_import(req: DriveLibraryImportRequest) -> dict[str, Any]:
+    """Create local quarantined snapshots only after explicit human confirmation."""
+    try:
+        with db() as conn:
+            root_id, account_id = _google_drive_binding(conn)
+            result = drive_library_workflow.import_review(
+                conn,
+                review_id=req.review_id,
+                root=DB_PATH.parent,
+                inbox_root=library_inbox_root(),
+                database_root=DB_PATH.parent,
+                approved_root_id=root_id,
+                account_permission_id=account_id,
+                received_at=utc_now(),
+                confirmed=bool(req.confirmed),
+            )
+    except (GoogleDriveError, DriveLibraryImportError, LibraryIntakeError) as exc:
+        status_code = 413 if getattr(exc, "code", "") in {"too_large", "batch_too_large"} else 409
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    await hub.broadcast()
+    return {**result, "additional_ai_calls": 0}
 
 
 @app.post("/api/drive/google/disconnect")
