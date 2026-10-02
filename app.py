@@ -103,6 +103,17 @@ LEGACY_ACTIVE_WORKFLOW_STATUSES = {
     "Needs Revision",
 }
 BLOCKER_TYPES = {"Person", "Date", "Approval", "Dependency", "Condition", "Other"}
+PRIORITY_STATUSES = {"Active", "Upcoming", "Paused", "Completed", "Retired"}
+DEFAULT_MAX_ACTIVE_PRIORITIES = 3
+GUARDRAIL_DEFINITIONS = {
+    "max_active_priorities": ("Keep only a small number of major priorities active at once.", DEFAULT_MAX_ACTIVE_PRIORITIES),
+    "deliberate_activation_required": ("Require deliberate human action before activating projects.", None),
+    "new_ideas_default_nursery": ("Capture new ideas in Nursery / Future Idea instead of activating them.", None),
+    "prefer_completion_over_expansion": ("Prefer completing current work before expanding the active portfolio.", None),
+    "scope_creep_warning": ("Warn when proposed work falls outside current priorities or expands active work.", None),
+    "good_enough_stopping_point": ("Treat an intentionally sufficient stopping point as valid.", None),
+    "protect_open_time": ("Protect meaningful open time from avoidable commitments.", None),
+}
 LIBRARY_MATERIAL_TYPES = ("Lesson Plan", "Instructor Notes", "Worksheet", "Slideshow", "Handout", "Supply List", "Photo", "Video", "Audio", "Document", "Spreadsheet", "Archive", "Reference", "Other")
 PROGRAMS_LIBRARY_DECISIONS = ("reuse", "revise", "create_new")
 GRANT_STATUSES = ("Discovered", "Reviewing", "Pursue", "Preparing", "Submitted", "Awarded", "Declined", "Passed")
@@ -384,6 +395,7 @@ def init_db() -> None:
                 ) DEFAULT 'Active Now',
                 purpose TEXT NOT NULL DEFAULT '',
                 owner_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+                priority_id INTEGER REFERENCES campus_priorities(id) ON DELETE SET NULL,
                 why_it_matters TEXT NOT NULL DEFAULT '',
                 state_reason TEXT NOT NULL DEFAULT '',
                 state_changed_at TEXT,
@@ -403,6 +415,56 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_project_state_history_project
                 ON project_state_history(project_id,created_at DESC,id DESC);
+
+            CREATE TABLE IF NOT EXISTS campus_priorities (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                intended_outcome TEXT NOT NULL DEFAULT '',
+                owner_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+                status TEXT NOT NULL CHECK(status IN ('Active','Upcoming','Paused','Completed','Retired')),
+                rank INTEGER NOT NULL DEFAULT 100,
+                start_date TEXT,
+                end_date TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_campus_priorities_status_rank
+                ON campus_priorities(status,rank,id);
+
+            CREATE TABLE IF NOT EXISTS campus_priority_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                priority_id INTEGER NOT NULL REFERENCES campus_priorities(id) ON DELETE CASCADE,
+                action TEXT NOT NULL,
+                previous_status TEXT,
+                new_status TEXT,
+                detail TEXT NOT NULL DEFAULT '',
+                actor TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_campus_priority_history_priority
+                ON campus_priority_history(priority_id,created_at DESC,id DESC);
+
+            CREATE TABLE IF NOT EXISTS operational_guardrails (
+                code TEXT PRIMARY KEY,
+                statement TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                numeric_value INTEGER,
+                updated_by TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS operational_guardrail_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL REFERENCES operational_guardrails(code) ON DELETE CASCADE,
+                previous_enabled INTEGER,
+                new_enabled INTEGER NOT NULL,
+                previous_numeric_value INTEGER,
+                new_numeric_value INTEGER,
+                actor TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_operational_guardrail_history_code
+                ON operational_guardrail_history(code,created_at DESC,id DESC);
 
             CREATE TABLE IF NOT EXISTS tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -894,6 +956,7 @@ def init_db() -> None:
             "portfolio_state": "TEXT CHECK(portfolio_state IN ('Active Now','Dormant','Nursery / Future Idea','Completed','Dead / Retired'))",
             "purpose": "TEXT NOT NULL DEFAULT ''",
             "owner_agent_id": "TEXT REFERENCES agents(id) ON DELETE SET NULL",
+            "priority_id": "INTEGER REFERENCES campus_priorities(id) ON DELETE SET NULL",
             "why_it_matters": "TEXT NOT NULL DEFAULT ''",
             "state_reason": "TEXT NOT NULL DEFAULT ''",
             "state_changed_at": "TEXT",
@@ -904,6 +967,10 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_projects_portfolio_state "
             "ON projects(portfolio_state,updated_at DESC,id DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_projects_priority "
+            "ON projects(priority_id,portfolio_state,updated_at DESC,id DESC)"
         )
 
         # v0.10 preserves workflow status and classifies only legacy rows whose
@@ -951,6 +1018,17 @@ def init_db() -> None:
         }.items():
             if column not in task_columns:
                 conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {ddl}")
+
+        guardrail_now = utc_now()
+        for code, (statement, numeric_value) in GUARDRAIL_DEFINITIONS.items():
+            conn.execute(
+                """
+                INSERT INTO operational_guardrails(code,statement,enabled,numeric_value,updated_by,updated_at)
+                VALUES(?,?,1,?,'System Migration',?)
+                ON CONFLICT(code) DO UPDATE SET statement=excluded.statement
+                """,
+                (code, statement, numeric_value, guardrail_now),
+            )
 
         # v0.8.7: conversational Poe needs an explicit primary-person alias
         # for “me / I / my” and a truthful date-only mode for remembered hours.
@@ -1216,6 +1294,93 @@ def log(conn: sqlite3.Connection, event_type: str, actor: str, message: str) -> 
 
 def rows(conn: sqlite3.Connection, query: str, params: tuple = ()) -> list[dict[str, Any]]:
     return [dict(r) for r in conn.execute(query, params).fetchall()]
+
+
+def guardrail_enabled(conn: sqlite3.Connection, code: str) -> bool:
+    if code not in GUARDRAIL_DEFINITIONS:
+        return False
+    row = conn.execute("SELECT enabled FROM operational_guardrails WHERE code=?", (code,)).fetchone()
+    return bool(row and row["enabled"])
+
+
+def active_priority_limit(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        "SELECT enabled,numeric_value FROM operational_guardrails WHERE code='max_active_priorities'"
+    ).fetchone()
+    if not row or not row["enabled"]:
+        return 0
+    return max(1, int(row["numeric_value"] or DEFAULT_MAX_ACTIVE_PRIORITIES))
+
+
+def _parse_optional_date(value: str | None, label: str) -> str | None:
+    cleaned = str(value or "").strip() or None
+    if cleaned:
+        try:
+            return date.fromisoformat(cleaned).isoformat()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"{label} must use YYYY-MM-DD.") from exc
+    return None
+
+
+def project_activation_warnings(conn: sqlite3.Connection, project_id: int | None = None) -> list[dict[str, Any]]:
+    """Return fixed, deterministic decision-support warnings; never mutate project state."""
+    project = None
+    if project_id is not None:
+        project = conn.execute(
+            """
+            SELECT p.*,cp.status AS priority_status,cp.title AS priority_title
+            FROM projects p LEFT JOIN campus_priorities cp ON cp.id=p.priority_id
+            WHERE p.id=?
+            """,
+            (project_id,),
+        ).fetchone()
+    warnings: list[dict[str, Any]] = []
+    active_priority_count = int(
+        conn.execute("SELECT COUNT(*) FROM campus_priorities WHERE status='Active'").fetchone()[0]
+    )
+    limit = active_priority_limit(conn)
+    has_active_priority = bool(project and project["priority_id"] and project["priority_status"] == "Active")
+    if guardrail_enabled(conn, "scope_creep_warning") and not has_active_priority:
+        warnings.append({
+            "code": "outside_active_priorities",
+            "message": "This project is not assigned to a current Active Campus priority.",
+            "active_priority_count": active_priority_count,
+            "active_priority_limit": limit or None,
+        })
+        if limit and active_priority_count >= limit:
+            warnings.append({
+                "code": "active_priority_limit_reached",
+                "message": f"The Campus already has {active_priority_count} active priorities, meeting the configured limit of {limit}.",
+                "active_priority_count": active_priority_count,
+                "active_priority_limit": limit,
+            })
+    if guardrail_enabled(conn, "prefer_completion_over_expansion"):
+        existing = rows(
+            conn,
+            """
+            SELECT p.id,p.title,p.next_review_at,
+                   (SELECT title FROM tasks t WHERE t.project_id=p.id AND t.status NOT IN ('Completed','Cancelled') ORDER BY t.sequence,t.id LIMIT 1) AS next_action,
+                   (SELECT COUNT(*) FROM tasks t WHERE t.project_id=p.id AND (t.status='Blocked' OR TRIM(COALESCE(t.blocked_reason,''))<>'')) AS unresolved_blockers
+            FROM projects p
+            WHERE p.portfolio_state='Active Now' AND p.id<>COALESCE(?, -1) AND p.status<>'Completed'
+            ORDER BY p.updated_at DESC,p.id DESC
+            """,
+            (project_id,),
+        )
+        if existing:
+            today = str(environment_summary(conn).get("local_date") or date.today().isoformat())
+            warnings.append({
+                "code": "unfinished_active_work",
+                "message": f"{len(existing)} other Active Now project(s) remain unfinished.",
+                "projects": [
+                    {
+                        **item,
+                        "review_overdue": bool(item.get("next_review_at") and item["next_review_at"] < today),
+                    }
+                    for item in existing
+                ],
+            })
+    return warnings
 
 
 def estimate_tokens_from_chars(char_count: int | None) -> int:
@@ -6034,6 +6199,28 @@ def current_state() -> dict[str, Any]:
                 conn,
                 "SELECT * FROM project_state_history ORDER BY created_at DESC,id DESC",
             ),
+            "campus_priorities": rows(
+                conn,
+                """
+                SELECT cp.*,a.name AS owner_name
+                FROM campus_priorities cp
+                LEFT JOIN agents a ON a.id=cp.owner_agent_id
+                ORDER BY CASE cp.status WHEN 'Active' THEN 0 WHEN 'Upcoming' THEN 1 WHEN 'Paused' THEN 2 WHEN 'Completed' THEN 3 ELSE 4 END,
+                         cp.rank,cp.id
+                """,
+            ),
+            "campus_priority_history": rows(
+                conn,
+                "SELECT * FROM campus_priority_history ORDER BY created_at DESC,id DESC",
+            ),
+            "operational_guardrails": rows(
+                conn,
+                "SELECT * FROM operational_guardrails ORDER BY rowid",
+            ),
+            "operational_guardrail_history": rows(
+                conn,
+                "SELECT * FROM operational_guardrail_history ORDER BY created_at DESC,id DESC LIMIT 100",
+            ),
             "tasks": rows(conn, "SELECT * FROM tasks ORDER BY project_id DESC,sequence,id"),
             "approvals": approval_rows(conn),
             "notes": rows(conn, "SELECT * FROM notes ORDER BY id DESC LIMIT 100"),
@@ -7567,6 +7754,7 @@ class ProjectRequest(BaseModel):
 class ProjectContextRequest(BaseModel):
     purpose: str = ""
     owner_agent_id: str | None = None
+    priority_id: int | None = None
     why_it_matters: str = ""
     next_review_at: str | None = None
 
@@ -7574,6 +7762,40 @@ class ProjectContextRequest(BaseModel):
 class ProjectPortfolioStateRequest(BaseModel):
     portfolio_state: str
     reason: str
+    confirmed: bool = False
+
+
+class ProjectIdeaRequest(BaseModel):
+    title: str
+    purpose: str = ""
+    owner_agent_id: str | None = None
+    why_it_matters: str = ""
+    priority_id: int | None = None
+    create_active: bool = False
+    reason: str = ""
+    confirmed: bool = False
+
+
+class CampusPriorityRequest(BaseModel):
+    title: str
+    intended_outcome: str = ""
+    owner_agent_id: str | None = None
+    status: str = "Upcoming"
+    rank: int = 100
+    start_date: str | None = None
+    end_date: str | None = None
+    confirmed: bool = False
+    override_active_limit: bool = False
+
+
+class CampusPriorityOrderRequest(BaseModel):
+    priority_ids: list[int]
+    confirmed: bool = False
+
+
+class OperationalGuardrailRequest(BaseModel):
+    enabled: bool
+    numeric_value: int | None = None
     confirmed: bool = False
 
 
@@ -11061,9 +11283,9 @@ async def _api_chief_plan_locked(req: ProjectRequest) -> dict[str, Any]:
                 ) VALUES(?,?,?,?,?,?,?,?,?)
                 """,
                 (
-                    plan["project_title"], "Awaiting Approval", "Active Now",
+                    plan["project_title"], "Awaiting Approval", "Nursery / Future Idea",
                     str(plan.get("summary") or "")[:1200], "chief",
-                    "Human requested Stella to prepare this project plan.", now, now, now,
+                    "Stella prepared this proposed project; a human has not activated it.", now, now, now,
                 ),
             )
             project_id = int(cur.lastrowid)
@@ -11074,8 +11296,8 @@ async def _api_chief_plan_locked(req: ProjectRequest) -> dict[str, Any]:
                 ) VALUES(?,?,?,?,?,?)
                 """,
                 (
-                    project_id, None, "Active Now",
-                    "Human requested Stella to prepare this project plan.", "Human", now,
+                    project_id, None, "Nursery / Future Idea",
+                    "Stella prepared this proposed project; a human has not activated it.", "System", now,
                 ),
             )
 
@@ -11330,6 +11552,240 @@ async def api_demo_start(req: ProjectRequest) -> dict[str, Any]:
     return {"status": "started", "project_id": project_id}
 
 
+def _clean_priority_request(req: CampusPriorityRequest) -> dict[str, Any]:
+    title = " ".join(str(req.title or "").split()).strip()[:240]
+    if not title:
+        raise HTTPException(status_code=400, detail="Priority title is required.")
+    status = " ".join(str(req.status or "").split()).strip()
+    if status not in PRIORITY_STATUSES:
+        raise HTTPException(status_code=400, detail="Unknown priority status.")
+    owner_agent_id = str(req.owner_agent_id or "").strip() or None
+    if owner_agent_id not in PORTFOLIO_OWNERS and owner_agent_id is not None:
+        raise HTTPException(status_code=400, detail="Priority owner must be one of the six existing Campus staff members.")
+    rank = int(req.rank)
+    if rank < 1 or rank > 9999:
+        raise HTTPException(status_code=400, detail="Priority rank must be between 1 and 9999.")
+    start_date = _parse_optional_date(req.start_date, "Start date")
+    end_date = _parse_optional_date(req.end_date, "End date")
+    if start_date and end_date and end_date < start_date:
+        raise HTTPException(status_code=400, detail="Priority end date cannot be before its start date.")
+    return {
+        "title": title,
+        "intended_outcome": " ".join(str(req.intended_outcome or "").split()).strip()[:1200],
+        "owner_agent_id": owner_agent_id,
+        "status": status,
+        "rank": rank,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+
+
+def _enforce_active_priority_limit(
+    conn: sqlite3.Connection,
+    *,
+    exclude_priority_id: int | None,
+    confirmed: bool,
+    override_active_limit: bool,
+) -> dict[str, Any] | None:
+    limit = active_priority_limit(conn)
+    if not limit:
+        return None
+    count = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM campus_priorities WHERE status='Active' AND id<>COALESCE(?, -1)",
+            (exclude_priority_id,),
+        ).fetchone()[0]
+    )
+    if count + 1 <= limit:
+        return None
+    conflict = {
+        "code": "max_active_priorities",
+        "message": f"Activating this priority would create {count + 1} active priorities, above the configured limit of {limit}.",
+        "active_count": count,
+        "proposed_active_count": count + 1,
+        "limit": limit,
+        "requires_override": True,
+    }
+    if not (confirmed and override_active_limit):
+        raise HTTPException(status_code=409, detail=conflict)
+    return conflict
+
+
+@app.post("/api/priorities")
+async def api_priority_create(req: CampusPriorityRequest) -> dict[str, Any]:
+    values = _clean_priority_request(req)
+    if values["status"] == "Active" and not req.confirmed:
+        raise HTTPException(status_code=409, detail="Explicit human confirmation is required to create an Active priority.")
+    with db() as conn:
+        override = None
+        if values["status"] == "Active":
+            override = _enforce_active_priority_limit(
+                conn, exclude_priority_id=None, confirmed=req.confirmed, override_active_limit=req.override_active_limit
+            )
+        now = utc_now()
+        cursor = conn.execute(
+            """
+            INSERT INTO campus_priorities(title,intended_outcome,owner_agent_id,status,rank,start_date,end_date,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?)
+            """,
+            (*values.values(), now, now),
+        )
+        priority_id = int(cursor.lastrowid)
+        detail = "Human created the priority."
+        if override:
+            detail += f" Human explicitly overrode the active-priority limit of {override['limit']}."
+        conn.execute(
+            "INSERT INTO campus_priority_history(priority_id,action,previous_status,new_status,detail,actor,created_at) VALUES(?,?,?,?,?,?,?)",
+            (priority_id, "created", None, values["status"], detail, "Human", now),
+        )
+        log(conn, "campus_priority", "Human", f"Created Campus priority: {values['title']} ({values['status']}).")
+    await hub.broadcast()
+    return {"status": "created", "priority_id": priority_id, "limit_override": override, "additional_ai_calls": 0}
+
+
+@app.post("/api/priorities/{priority_id}/update")
+async def api_priority_update(priority_id: int, req: CampusPriorityRequest) -> dict[str, Any]:
+    values = _clean_priority_request(req)
+    with db() as conn:
+        current = conn.execute("SELECT * FROM campus_priorities WHERE id=?", (priority_id,)).fetchone()
+        if not current:
+            raise HTTPException(status_code=404, detail="Priority not found")
+        if (current["status"] == "Active" or values["status"] == "Active") and not req.confirmed:
+            raise HTTPException(status_code=409, detail="Explicit human confirmation is required to change an Active priority.")
+        if values["status"] == "Retired" and current["status"] != "Retired" and not req.confirmed:
+            raise HTTPException(status_code=409, detail="Explicit human confirmation is required to retire a priority.")
+        override = None
+        if values["status"] == "Active" and current["status"] != "Active":
+            override = _enforce_active_priority_limit(
+                conn, exclude_priority_id=priority_id, confirmed=req.confirmed, override_active_limit=req.override_active_limit
+            )
+        now = utc_now()
+        conn.execute(
+            """
+            UPDATE campus_priorities
+            SET title=?,intended_outcome=?,owner_agent_id=?,status=?,rank=?,start_date=?,end_date=?,updated_at=?
+            WHERE id=?
+            """,
+            (*values.values(), now, priority_id),
+        )
+        detail = "Human updated the priority."
+        if override:
+            detail += f" Human explicitly overrode the active-priority limit of {override['limit']}."
+        conn.execute(
+            "INSERT INTO campus_priority_history(priority_id,action,previous_status,new_status,detail,actor,created_at) VALUES(?,?,?,?,?,?,?)",
+            (priority_id, "updated", current["status"], values["status"], detail, "Human", now),
+        )
+        log(conn, "campus_priority", "Human", f"Updated Campus priority: {values['title']} ({values['status']}).")
+    await hub.broadcast()
+    return {"status": "updated", "priority_id": priority_id, "limit_override": override, "additional_ai_calls": 0}
+
+
+@app.post("/api/priorities/reorder")
+async def api_priority_reorder(req: CampusPriorityOrderRequest) -> dict[str, Any]:
+    if not req.confirmed:
+        raise HTTPException(status_code=409, detail="Explicit human confirmation is required to reorder Active priorities.")
+    ordered_ids = [int(value) for value in req.priority_ids]
+    if len(ordered_ids) != len(set(ordered_ids)):
+        raise HTTPException(status_code=400, detail="Priority order cannot contain duplicates.")
+    with db() as conn:
+        active_ids = [int(row[0]) for row in conn.execute("SELECT id FROM campus_priorities WHERE status='Active'").fetchall()]
+        if set(ordered_ids) != set(active_ids):
+            raise HTTPException(status_code=400, detail="Priority order must include every Active priority exactly once.")
+        now = utc_now()
+        for rank, priority_id in enumerate(ordered_ids, start=1):
+            conn.execute("UPDATE campus_priorities SET rank=?,updated_at=? WHERE id=?", (rank, now, priority_id))
+            conn.execute(
+                "INSERT INTO campus_priority_history(priority_id,action,previous_status,new_status,detail,actor,created_at) VALUES(?,?,?,?,?,?,?)",
+                (priority_id, "reordered", "Active", "Active", f"Human set active rank to {rank}.", "Human", now),
+            )
+        log(conn, "campus_priority", "Human", "Reordered Active Campus priorities.")
+    await hub.broadcast()
+    return {"status": "reordered", "priority_ids": ordered_ids, "additional_ai_calls": 0}
+
+
+@app.post("/api/guardrails/{code}")
+async def api_guardrail_update(code: str, req: OperationalGuardrailRequest) -> dict[str, Any]:
+    if code not in GUARDRAIL_DEFINITIONS:
+        raise HTTPException(status_code=404, detail="Unknown operational guardrail.")
+    if not req.enabled and not req.confirmed:
+        raise HTTPException(status_code=409, detail="Explicit human confirmation is required to disable an operational guardrail.")
+    numeric_value = req.numeric_value
+    if code == "max_active_priorities":
+        if numeric_value is None:
+            numeric_value = DEFAULT_MAX_ACTIVE_PRIORITIES
+        if int(numeric_value) < 1 or int(numeric_value) > 20:
+            raise HTTPException(status_code=400, detail="Maximum active priorities must be between 1 and 20.")
+        numeric_value = int(numeric_value)
+    elif numeric_value is not None:
+        raise HTTPException(status_code=400, detail="This fixed guardrail does not accept a numeric value.")
+    with db() as conn:
+        current = conn.execute("SELECT * FROM operational_guardrails WHERE code=?", (code,)).fetchone()
+        if not current:
+            raise HTTPException(status_code=404, detail="Operational guardrail is unavailable.")
+        now = utc_now()
+        conn.execute(
+            "UPDATE operational_guardrails SET enabled=?,numeric_value=?,updated_by='Human',updated_at=? WHERE code=?",
+            (int(req.enabled), numeric_value, now, code),
+        )
+        conn.execute(
+            """
+            INSERT INTO operational_guardrail_history(
+                code,previous_enabled,new_enabled,previous_numeric_value,new_numeric_value,actor,created_at
+            ) VALUES(?,?,?,?,?,'Human',?)
+            """,
+            (code, current["enabled"], int(req.enabled), current["numeric_value"], numeric_value, now),
+        )
+        log(conn, "operational_guardrail", "Human", f"Updated operational guardrail: {code}.")
+    await hub.broadcast()
+    return {"status": "updated", "code": code, "additional_ai_calls": 0}
+
+
+@app.post("/api/projects/ideas")
+async def api_project_idea(req: ProjectIdeaRequest) -> dict[str, Any]:
+    title = " ".join(str(req.title or "").split()).strip()[:240]
+    if not title:
+        raise HTTPException(status_code=400, detail="Project title is required.")
+    owner_agent_id = str(req.owner_agent_id or "").strip() or None
+    if owner_agent_id not in PORTFOLIO_OWNERS and owner_agent_id is not None:
+        raise HTTPException(status_code=400, detail="Project owner must be one of the six existing Campus staff members.")
+    reason = " ".join(str(req.reason or "").split()).strip()[:1000]
+    if req.create_active and (not req.confirmed or not reason):
+        raise HTTPException(status_code=409, detail="Creating an Active Now project requires explicit human confirmation and a reason.")
+    with db() as conn:
+        if req.priority_id is not None:
+            priority = conn.execute("SELECT id,status FROM campus_priorities WHERE id=?", (req.priority_id,)).fetchone()
+            if not priority or priority["status"] in {"Completed", "Retired"}:
+                raise HTTPException(status_code=400, detail="Choose a current Campus priority or leave the project unassigned.")
+        now = utc_now()
+        cursor = conn.execute(
+            """
+            INSERT INTO projects(
+                title,status,portfolio_state,purpose,owner_agent_id,priority_id,why_it_matters,
+                state_reason,state_changed_at,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                title, "Active" if req.create_active else "Proposed",
+                "Active Now" if req.create_active else "Nursery / Future Idea",
+                " ".join(str(req.purpose or "").split()).strip()[:1200], owner_agent_id, req.priority_id,
+                " ".join(str(req.why_it_matters or "").split()).strip()[:1200],
+                reason if req.create_active else "Human captured this as a future idea.", now, now, now,
+            ),
+        )
+        project_id = int(cursor.lastrowid)
+        warnings = project_activation_warnings(conn, project_id) if req.create_active else []
+        conn.execute(
+            "INSERT INTO project_state_history(project_id,previous_state,new_state,reason,actor,created_at) VALUES(?,?,?,?,?,?)",
+            (
+                project_id, None, "Active Now" if req.create_active else "Nursery / Future Idea",
+                reason if req.create_active else "Human captured this as a future idea.", "Human", now,
+            ),
+        )
+        log(conn, "project", "Human", f"Captured project: {title} ({'Active Now' if req.create_active else 'Nursery / Future Idea'}).")
+    await hub.broadcast()
+    return {"status": "created", "project_id": project_id, "portfolio_state": "Active Now" if req.create_active else "Nursery / Future Idea", "warnings": warnings, "additional_ai_calls": 0}
+
+
 @app.post("/api/projects/{project_id}/notes")
 async def api_project_note(project_id: int, req: NoteRequest) -> dict[str, Any]:
     body = req.body.strip()
@@ -11356,25 +11812,24 @@ async def api_project_context(project_id: int, req: ProjectContextRequest) -> di
     owner_agent_id = str(req.owner_agent_id or "").strip() or None
     if owner_agent_id not in PORTFOLIO_OWNERS and owner_agent_id is not None:
         raise HTTPException(status_code=400, detail="Project owner must be one of the six existing Campus staff members.")
-    next_review_at = str(req.next_review_at or "").strip() or None
-    if next_review_at:
-        try:
-            next_review_at = date.fromisoformat(next_review_at).isoformat()
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Next review date must use YYYY-MM-DD.") from exc
+    next_review_at = _parse_optional_date(req.next_review_at, "Next review date")
 
     with db() as conn:
         project = conn.execute("SELECT id,title FROM projects WHERE id=?", (project_id,)).fetchone()
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
+        if req.priority_id is not None:
+            priority = conn.execute("SELECT id,status FROM campus_priorities WHERE id=?", (req.priority_id,)).fetchone()
+            if not priority or priority["status"] in {"Completed", "Retired"}:
+                raise HTTPException(status_code=400, detail="Choose a current Campus priority or leave the project unassigned.")
         now = utc_now()
         conn.execute(
             """
             UPDATE projects
-            SET purpose=?,owner_agent_id=?,why_it_matters=?,next_review_at=?,updated_at=?
+            SET purpose=?,owner_agent_id=?,priority_id=?,why_it_matters=?,next_review_at=?,updated_at=?
             WHERE id=?
             """,
-            (purpose, owner_agent_id, why_it_matters, next_review_at, now, project_id),
+            (purpose, owner_agent_id, req.priority_id, why_it_matters, next_review_at, now, project_id),
         )
         log(conn, "project_context", "Human", f"Updated project context: {project['title']}")
     await hub.broadcast()
@@ -11402,6 +11857,7 @@ async def api_project_portfolio_state(project_id: int, req: ProjectPortfolioStat
     if workflow_task and not workflow_task.done():
         raise HTTPException(status_code=409, detail="Wait until the running Campus workflow pauses before changing portfolio state.")
 
+    warnings: list[dict[str, Any]] = []
     with db() as conn:
         project = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
         if not project:
@@ -11421,6 +11877,9 @@ async def api_project_portfolio_state(project_id: int, req: ProjectPortfolioStat
         )
         if confirmation_required and not req.confirmed:
             raise HTTPException(status_code=409, detail="Explicit trusted-operator confirmation is required for this change.")
+
+        if new_state == "Active Now" and previous_state != "Active Now":
+            warnings = project_activation_warnings(conn, project_id)
 
         now = utc_now()
         conn.execute(
@@ -11452,6 +11911,7 @@ async def api_project_portfolio_state(project_id: int, req: ProjectPortfolioStat
         "project_id": project_id,
         "portfolio_state": new_state,
         "history_id": history_id,
+        "warnings": warnings,
         "additional_ai_calls": 0,
     }
 

@@ -435,6 +435,7 @@ function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
 function buildingById(id){return state?.buildings.find(b=>b.id===id);}
 function agentById(id){return state?.agents.find(a=>a.id===id);}
 function projectById(id){return state?.projects.find(p=>p.id===Number(id));}
+function priorityById(id){return (state?.campus_priorities||[]).find(p=>p.id===Number(id));}
 function taskById(id){return state?.tasks.find(t=>t.id===Number(id));}
 function ownerName(id){return agentById(id)?.name || id || 'Unassigned';}
 function fmtTime(iso, includeDate=false){if(!iso)return '';const d=new Date(iso);return includeDate?d.toLocaleString():d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});}
@@ -1391,13 +1392,22 @@ function drawerPlaybooks(){
 }
 
 function drawerProjects(){
-  if(!state.projects.length)return '<p>No projects yet. Ask the Campus for help, and create a project only when the work truly needs one.</p>';
-  return `<div class="drawer-stack">${state.projects.map(p=>{const tasks=projectTasks(p.id);const done=tasks.filter(t=>t.status==='Completed').length;return `<button type="button" class="project-card-button" data-open-project="${p.id}"><div><strong>${esc(p.title)}</strong><small>${esc(portfolioStateLabel(p))} portfolio · ${esc(p.status)} workflow · ${done}/${tasks.length} tasks complete</small></div><span>›</span></button>`;}).join('')}</div>`;
+  const priorities=state.campus_priorities||[],active=priorities.filter(p=>p.status==='Active').sort((a,b)=>Number(a.rank)-Number(b.rank));
+  const guardrails=state.operational_guardrails||[],owners=(state.agents||[]).filter(a=>['chief','programs','research','caretaker','grants','operations'].includes(a.id));
+  const ownerOptions=selected=>`<option value="">Not assigned</option>${owners.map(a=>`<option value="${esc(a.id)}"${selected===a.id?' selected':''}>${esc(a.name)} · ${esc(a.role)}</option>`).join('')}`;
+  const priorityForm=(p=null)=>`<form class="memory-form" data-campus-priority${p?` data-priority-id="${p.id}"`:''}><div class="memory-form-grid"><label>Title<input name="title" required maxlength="240" value="${esc(p?.title||'')}"></label><label>Status<select name="status">${['Active','Upcoming','Paused','Completed','Retired'].map(x=>`<option${p?.status===x||(!p&&x==='Upcoming')?' selected':''}>${x}</option>`).join('')}</select></label><label>Owner<select name="owner_agent_id">${ownerOptions(p?.owner_agent_id)}</select></label><label>Rank<input name="rank" type="number" min="1" max="9999" value="${Number(p?.rank||100)}"></label><label>Start<input name="start_date" type="date" value="${esc(p?.start_date||'')}"></label><label>End<input name="end_date" type="date" value="${esc(p?.end_date||'')}"></label></div><label>Intended outcome<textarea name="intended_outcome" rows="2" maxlength="1200">${esc(p?.intended_outcome||'')}</textarea></label><label class="checkbox-row"><input type="checkbox" name="confirmed"> I confirm this human-controlled priority change.</label><label class="checkbox-row"><input type="checkbox" name="override_active_limit"> If necessary, explicitly exceed the active-priority limit.</label><button type="submit">${p?'Save priority':'Create priority'}</button></form>`;
+  const priorityCards=priorities.map(p=>`<details class="memory-card"><summary><strong>${esc(p.title)}</strong> <small>${esc(p.status)}${p.status==='Active'?` · rank ${p.rank}`:''}${p.owner_name?` · ${esc(p.owner_name)}`:''}</small></summary>${priorityForm(p)}</details>`).join('');
+  const guardrailCards=guardrails.map(g=>`<form class="memory-form" data-operational-guardrail="${esc(g.code)}"><div class="section-row"><div><strong>${esc(g.statement)}</strong><small>${esc(g.code)}</small></div><label class="checkbox-row"><input type="checkbox" name="enabled"${g.enabled?' checked':''}> Enabled</label></div>${g.code==='max_active_priorities'?`<label>Maximum active priorities<input type="number" name="numeric_value" min="1" max="20" value="${Number(g.numeric_value||3)}"></label>`:''}<label class="checkbox-row"><input type="checkbox" name="confirmed"> Confirm if disabling this guardrail.</label><button type="submit">Save guardrail</button></form>`).join('');
+  const projects=state.projects.length?`<div class="drawer-stack">${state.projects.map(p=>{const tasks=projectTasks(p.id);const done=tasks.filter(t=>t.status==='Completed').length,priority=priorityById(p.priority_id);return `<button type="button" class="project-card-button" data-open-project="${p.id}"><div><strong>${esc(p.title)}</strong><small>${esc(portfolioStateLabel(p))} portfolio · ${esc(p.status)} workflow${priority?` · ${esc(priority.title)}`:''} · ${done}/${tasks.length} tasks complete</small></div><span>›</span></button>`;}).join('')}</div>`:'<p>No projects yet. Capture future work in the Nursery until a human deliberately activates it.</p>';
+  return `<section class="drawer-section"><div class="section-row"><h4>Campus priorities</h4><span>${active.length} active</span></div>${active.length>1?`<div class="memory-actions">${active.map((p,i)=>`<span><strong>${i+1}. ${esc(p.title)}</strong> ${i?`<button type="button" data-priority-move="${p.id}" data-priority-direction="up">Move up</button>`:''}${i<active.length-1?`<button type="button" data-priority-move="${p.id}" data-priority-direction="down">Move down</button>`:''}</span>`).join('')}</div>`:''}${priorityCards||'<p>No Campus priorities recorded.</p>'}<details><summary>Create Campus priority</summary>${priorityForm()}</details></section>
+  <section class="drawer-section"><h4>Capture a future idea</h4><form class="memory-form" data-project-idea><label>Title<input name="title" required maxlength="240"></label><label>Purpose<textarea name="purpose" rows="2" maxlength="1200"></textarea></label><div class="memory-form-grid"><label>Owner<select name="owner_agent_id">${ownerOptions(null)}</select></label><label>Primary priority<select name="priority_id"><option value="">No priority</option>${priorities.filter(p=>!['Completed','Retired'].includes(p.status)).map(p=>`<option value="${p.id}">${esc(p.title)} · ${esc(p.status)}</option>`).join('')}</select></label></div><label>Why it matters<textarea name="why_it_matters" rows="2" maxlength="1200"></textarea></label><small>New ideas enter Nursery / Future Idea. Activate later through the explicit project-state control.</small><button type="submit">Capture in Nursery</button></form></section>
+  <section class="drawer-section"><h4>Operational guardrails</h4><p>These are fixed Campus principles, not executable user-written rules.</p>${guardrailCards}</section>
+  <section class="drawer-section"><div class="section-row"><h4>Projects</h4><span>${state.projects.length}</span></div>${projects}</section>`;
 }
 function drawerProject(id){
   const p=projectById(id);if(!p)return '<p>Project not found.</p>';
   const tasks=projectTasks(p.id), notes=notesForProject(p.id), approvals=state.approvals.filter(a=>Number(a.project_id)===Number(p.id));
-  const stateHistory=projectStateHistory(p.id),owner=agentById(p.owner_agent_id);
+  const stateHistory=projectStateHistory(p.id),owner=agentById(p.owner_agent_id),primaryPriority=priorityById(p.priority_id);
   const projectMemories=memoriesForProject(p.id).filter(m=>m.status==='Active');
   const plan=(state.chief_plans||[]).find(x=>Number(x.project_id)===Number(p.id));
   const run=(state.workflow_runs||[]).find(x=>Number(x.project_id)===Number(p.id));
@@ -1426,12 +1436,14 @@ function drawerProject(id){
   };
   const portfolioLabel=portfolioStateLabel(p),stateTargets=transitionMap[portfolioLabel]||[];
   const ownerOptions=(state.agents||[]).filter(a=>['chief','programs','research','caretaker','grants','operations'].includes(a.id)).map(a=>`<option value="${esc(a.id)}"${p.owner_agent_id===a.id?' selected':''}>${esc(a.name)} · ${esc(a.role)}</option>`).join('');
+  const priorityOptions=(state.campus_priorities||[]).filter(x=>!['Completed','Retired'].includes(x.status)).map(x=>`<option value="${x.id}"${Number(p.priority_id)===Number(x.id)?' selected':''}>${esc(x.title)} · ${esc(x.status)}</option>`).join('');
+  const activationWarnings=stateTargets.includes('Active Now')?(()=>{const list=[],enabled=code=>(state.operational_guardrails||[]).find(g=>g.code===code)?.enabled;if(enabled('scope_creep_warning')&&(!primaryPriority||primaryPriority.status!=='Active'))list.push('This project is outside the current Active Campus priorities.');const unfinished=(state.projects||[]).filter(x=>x.id!==p.id&&x.portfolio_state==='Active Now'&&x.status!=='Completed');if(enabled('prefer_completion_over_expansion')&&unfinished.length)list.push(`${unfinished.length} other Active Now project(s) remain unfinished.`);return list;})():[];
   const contextHtml=`<section class="drawer-section project-portfolio-context"><div class="section-row"><h4>Portfolio context</h4><span>${esc(portfolioLabel)}</span></div>
     ${!p.portfolio_state?'<div class="output-empty"><strong>Human classification required.</strong><span>The v0.10 migration could not safely infer this project’s portfolio state.</span></div>':''}
-    <div class="management-grid"><div class="management-stat"><span>Portfolio state</span><strong>${esc(portfolioLabel)}</strong></div><div class="management-stat"><span>Workflow status</span><strong>${esc(p.status)}</strong></div><div class="management-stat"><span>Owner</span><strong>${esc(owner?.name||'Not assigned')}</strong></div><div class="management-stat"><span>Next review</span><strong>${esc(p.next_review_at||'Not set')}</strong></div></div>
+    <div class="management-grid"><div class="management-stat"><span>Portfolio state</span><strong>${esc(portfolioLabel)}</strong></div><div class="management-stat"><span>Workflow status</span><strong>${esc(p.status)}</strong></div><div class="management-stat"><span>Owner</span><strong>${esc(owner?.name||'Not assigned')}</strong></div><div class="management-stat"><span>Primary priority</span><strong>${esc(primaryPriority?.title||'Not assigned')}</strong></div><div class="management-stat"><span>Next review</span><strong>${esc(p.next_review_at||'Not set')}</strong></div></div>
     ${p.state_reason?`<p><strong>State reason:</strong> ${esc(p.state_reason)}</p>`:''}
-    <form data-project-context="${p.id}" class="memory-form"><label>Purpose<textarea name="purpose" rows="3" maxlength="1200">${esc(p.purpose||'')}</textarea></label><label>Owner<select name="owner_agent_id"><option value="">Not assigned</option>${ownerOptions}</select></label><label>Why it matters<textarea name="why_it_matters" rows="3" maxlength="1200">${esc(p.why_it_matters||'')}</textarea></label><label>Next review date<input name="next_review_at" type="date" value="${esc(p.next_review_at||'')}"></label><button type="submit">Save project context</button></form>
-    ${stateTargets.length?`<form data-project-state="${p.id}" class="memory-form project-state-form"><label>Change portfolio state<select name="portfolio_state" required><option value="">Choose state…</option>${stateTargets.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('')}</select></label><label>Human reason<textarea name="reason" rows="2" maxlength="1000" required></textarea></label><label class="checkbox-row"><input type="checkbox" name="confirmed" required> I confirm this deliberate portfolio-state change.</label><button type="submit">Change portfolio state</button></form>`:'<p><strong>Dead / Retired is terminal.</strong> This project remains available as institutional history.</p>'}
+    <form data-project-context="${p.id}" class="memory-form"><label>Purpose<textarea name="purpose" rows="3" maxlength="1200">${esc(p.purpose||'')}</textarea></label><label>Owner<select name="owner_agent_id"><option value="">Not assigned</option>${ownerOptions}</select></label><label>Primary current priority<select name="priority_id"><option value="">No priority</option>${priorityOptions}</select></label><label>Why it matters<textarea name="why_it_matters" rows="3" maxlength="1200">${esc(p.why_it_matters||'')}</textarea></label><label>Next review date<input name="next_review_at" type="date" value="${esc(p.next_review_at||'')}"></label><button type="submit">Save project context</button></form>
+    ${stateTargets.length?`<form data-project-state="${p.id}" class="memory-form project-state-form"><label>Change portfolio state<select name="portfolio_state" required><option value="">Choose state…</option>${stateTargets.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('')}</select></label>${activationWarnings.length?`<div class="output-empty"><strong>Activation guardrails</strong>${activationWarnings.map(x=>`<span>${esc(x)}</span>`).join('')}</div>`:''}<label>Human reason<textarea name="reason" rows="2" maxlength="1000" required></textarea></label><label class="checkbox-row"><input type="checkbox" name="confirmed" required> I reviewed the recorded context and confirm this deliberate portfolio-state change.</label><button type="submit">Change portfolio state</button></form>`:'<p><strong>Dead / Retired is terminal.</strong> This project remains available as institutional history.</p>'}
   </section>`;
 
   let tab=projectTabById.get(Number(p.id));
@@ -2161,7 +2173,7 @@ async function testProviderConnection(providerId){
 
 async function post(url,body){
   const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
-  if(!r.ok){let d={};try{d=await r.json();}catch{}throw new Error(d.detail||`Request failed (${r.status})`);}return r.json();
+  if(!r.ok){let d={};try{d=await r.json();}catch{}const detail=d.detail;throw new Error(typeof detail==='string'?detail:(detail?.message||`Request failed (${r.status})`));}return r.json();
 }
 async function loadContributionLedger(){
   contributionLedgerLoading=true;
@@ -2468,7 +2480,7 @@ async function updateTaskStatus(id,status){
 async function saveProjectContext(form){
   const fd=new FormData(form),projectId=Number(form.dataset.projectContext);
   try{
-    await post(`/api/projects/${projectId}/context`,{purpose:String(fd.get('purpose')||''),owner_agent_id:String(fd.get('owner_agent_id')||'')||null,why_it_matters:String(fd.get('why_it_matters')||''),next_review_at:String(fd.get('next_review_at')||'')||null});
+    await post(`/api/projects/${projectId}/context`,{purpose:String(fd.get('purpose')||''),owner_agent_id:String(fd.get('owner_agent_id')||'')||null,priority_id:fd.get('priority_id')?Number(fd.get('priority_id')):null,why_it_matters:String(fd.get('why_it_matters')||''),next_review_at:String(fd.get('next_review_at')||'')||null});
     toast('Project context saved.');openDrawer('project',projectId,'projects');
   }catch(err){toast(err.message);}
 }
@@ -2479,6 +2491,31 @@ async function changeProjectPortfolioState(form){
     await post(`/api/projects/${projectId}/portfolio-state`,{portfolio_state:String(fd.get('portfolio_state')||''),reason:String(fd.get('reason')||''),confirmed:fd.get('confirmed')==='on'});
     toast('Portfolio state changed and recorded in history.');openDrawer('project',projectId,'projects');
   }catch(err){toast(err.message);}
+}
+
+async function saveCampusPriority(form){
+  const fd=new FormData(form),id=form.dataset.priorityId;
+  const body={title:String(fd.get('title')||''),intended_outcome:String(fd.get('intended_outcome')||''),owner_agent_id:String(fd.get('owner_agent_id')||'')||null,status:String(fd.get('status')||'Upcoming'),rank:Number(fd.get('rank')||100),start_date:String(fd.get('start_date')||'')||null,end_date:String(fd.get('end_date')||'')||null,confirmed:fd.get('confirmed')==='on',override_active_limit:fd.get('override_active_limit')==='on'};
+  try{await post(id?`/api/priorities/${id}/update`:'/api/priorities',body);toast(id?'Priority updated.':'Priority created.');openDrawer('projects');}catch(err){toast(err.message);}
+}
+
+async function saveOperationalGuardrail(form){
+  const fd=new FormData(form),code=form.dataset.operationalGuardrail;
+  const raw=fd.get('numeric_value');
+  try{await post(`/api/guardrails/${code}`,{enabled:fd.get('enabled')==='on',numeric_value:raw?Number(raw):null,confirmed:fd.get('confirmed')==='on'});toast('Operational guardrail updated.');openDrawer('projects');}catch(err){toast(err.message);}
+}
+
+async function captureProjectIdea(form){
+  const fd=new FormData(form);
+  try{await post('/api/projects/ideas',{title:String(fd.get('title')||''),purpose:String(fd.get('purpose')||''),owner_agent_id:String(fd.get('owner_agent_id')||'')||null,priority_id:fd.get('priority_id')?Number(fd.get('priority_id')):null,why_it_matters:String(fd.get('why_it_matters')||'')});toast('Idea captured in Nursery / Future Idea.');openDrawer('projects');}catch(err){toast(err.message);}
+}
+
+async function reorderActivePriority(id,direction){
+  const active=(state.campus_priorities||[]).filter(p=>p.status==='Active').sort((a,b)=>Number(a.rank)-Number(b.rank)),index=active.findIndex(p=>Number(p.id)===Number(id)),other=direction==='up'?index-1:index+1;
+  if(index<0||other<0||other>=active.length)return;
+  [active[index],active[other]]=[active[other],active[index]];
+  if(!confirm('Confirm this human-controlled Active priority reorder?'))return;
+  try{await post('/api/priorities/reorder',{priority_ids:active.map(p=>p.id),confirmed:true});toast('Active priorities reordered.');openDrawer('projects');}catch(err){toast(err.message);}
 }
 
 async function saveTaskAttention(form){
@@ -2867,6 +2904,7 @@ els.drawerBody.addEventListener('click',e=>{
   else if(btn.dataset.approval)decideApproval(btn.dataset.approval,btn.dataset.decision);
   else if(btn.dataset.programsLibraryChoice)decideProgramsLibraryFirst(btn.dataset.taskId,btn.dataset.programsLibraryChoice,btn.dataset.collectionId||null);
   else if(btn.dataset.taskStatus)updateTaskStatus(btn.dataset.taskStatus,btn.dataset.statusValue);
+  else if(btn.dataset.priorityMove)reorderActivePriority(btn.dataset.priorityMove,btn.dataset.priorityDirection);
   else if(btn.dataset.planRevision)planRevision(btn.dataset.planRevision);
   else if(btn.hasAttribute('data-rescan-repository'))rescanRepository();
   else if(btn.dataset.memoryReview)reviewMemory(btn.dataset.memoryReview);
@@ -2981,6 +3019,9 @@ els.drawerBody.addEventListener('submit',e=>{
   const form=e.target.closest('form');if(!form)return;e.preventDefault();
   if(form.hasAttribute('data-project-context')){saveProjectContext(form);return;}
   if(form.hasAttribute('data-project-state')){changeProjectPortfolioState(form);return;}
+  if(form.hasAttribute('data-campus-priority')){saveCampusPriority(form);return;}
+  if(form.hasAttribute('data-operational-guardrail')){saveOperationalGuardrail(form);return;}
+  if(form.hasAttribute('data-project-idea')){captureProjectIdea(form);return;}
   if(form.hasAttribute('data-task-attention')){saveTaskAttention(form);return;}
   if(form.hasAttribute('data-stella-daily-form')){sendStellaDaily(form);return;}
   if(form.hasAttribute('data-librarian-form')){askLibrarian(form);return;}

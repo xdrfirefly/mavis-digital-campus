@@ -1,12 +1,15 @@
 # Development Status
 
-Audit scope: repository contents as inspected on 2026-09-07. This document does not treat README release history as proof beyond what is present in code and tests.
+Audit scope: repository contents as inspected on 2026-10-02. This document does not treat README release history as proof beyond what is present in code and tests.
 
 ## Working / Implemented
 
 - v0.10 Phase 1 Portfolio-State Normalization keeps workflow `projects.status` unchanged while adding human-governed Active Now, Dormant, Nursery / Future Idea, Completed, and Dead / Retired portfolio states; project purpose, canonical six-staff ownership, why-it-matters, state rationale, next review date, and auditable state history; and bounded task blocker/optional metadata.
 - v0.10 legacy migration maps only workflow `Completed` to portfolio Completed and known in-progress workflow states to provisional Active Now. Ambiguous rows remain visibly unclassified for trusted-operator review. Nursery/Dormant/completed/unclassified activation and retirement require explicit confirmation and a human reason; Dead / Retired is terminal, and no AI or background path can activate projects.
 - Ordinary Daily Steward task, blocker, linked-commitment, project-linked grant, and project-scoped memory candidates now require portfolio Active Now. The Daily Steward response shape itself is unchanged pending the separately scoped v0.10 dispatcher phase.
+- v0.10 Phase 2 adds human-controlled Campus priorities with Active, Upcoming, Paused, Completed, and Retired states; canonical staff ownership; deterministic rank; optional date bounds; one optional primary priority per project; and auditable create, edit, reorder, retirement, and active-limit override records.
+- Seven fixed operational guardrails are seeded and editable without executable expressions: maximum active priorities (default 3), deliberate activation required, new ideas default to Nursery, prefer completion over expansion, scope-creep warning, good-enough stopping point, and protect open time. Disabling a guardrail requires human confirmation and is audited.
+- New manual ideas and Stella-generated project proposals enter Nursery / Future Idea. Project activation warnings deterministically report outside-priority work and unfinished Active Now projects, including recorded next actions, overdue review dates, and blocker counts. No Phase 2 priority or guardrail path calls AI or changes state automatically.
 - FastAPI/SQLite campus application with static campus-map UI, canonical assets, WebSocket refreshes, and seeded buildings/agents.
 - Projects, tasks, approvals, revision workflows, role artifacts, notes, activity log, and AI control/cost records.
 - Ask Campus deterministically answers narrowly matched personal calendar questions for today, tomorrow, the next seven days, and named weekdays. Future focus uses the existing target-date-aware Daily Steward, makes no writes or AI calls, and calendar event content is excluded from external AI prompts.
@@ -39,6 +42,8 @@ Audit scope: repository contents as inspected on 2026-09-07. This document does 
 
 - Broader Google Calendar support (multiple calendars, write-back, incremental sync, and automatic refresh) remains deferred.
 - The product canon includes Plant/Living System and Property Asset concepts; no corresponding standalone SQLite tables were found.
+- Phase 3 Daily Dispatcher and weekly planning remain deferred. Phase 2 stores priorities and guardrails but does not change Daily Steward output, schedule work, or calculate priority scores.
+- Semantic comparison between proposed project expansion and a project's recorded purpose remains deferred; Phase 2 warns only from concrete structured data.
 - Natural-language contribution capture, automated communications, contribution exports/dashboards, and broad reporting remain deferred.
 - The supported deployment is local trusted-operator use on `127.0.0.1`. There is no authentication or authorization; personal/nonprofit permissions require a separate design before shared, volunteer-facing, LAN, or public access is expanded.
 - The README identifies future integrations such as broader grant sources and additional operational automation; they were not treated as implemented.
@@ -57,4 +62,3 @@ Audit scope: repository contents as inspected on 2026-09-07. This document does 
 - The suite is one large smoke/regression file rather than feature-scoped tests, making failure diagnosis and selective execution harder.
 - Browser behavior is protected mainly by source-string assertions; no browser-driven end-to-end test infrastructure was found.
 - The external Weather Underground, Open-Meteo, Grants.gov, OpenAI, and Gemini integrations have mocked/unit coverage but no documented live integration test process.
-- This audit environment had no discoverable Python executable or `.venv`, so the existing suite and server could not be executed here.

@@ -34,7 +34,7 @@ The application keeps a module-global WebSocket hub and one module-global `workf
 
 ## Storage and persistent data
 
-SQLite is the system of record at `mavis.db` beside `app.py` (or a temporary alternate `DB_PATH` during tests). `init_db()` creates and incrementally migrates the schema. Main entities include buildings, agents, people, work sessions/audit, grants, events, projects, audited project portfolio states, tasks and bounded blocker metadata, approvals, notes/activity logs, AI controls/calls, workflow artifacts, Library metadata/indexes/inbox, weather/seasonal data, playbooks, and institutional memory.
+SQLite is the system of record at `mavis.db` beside `app.py` (or a temporary alternate `DB_PATH` during tests). `init_db()` creates and incrementally migrates the schema. Main entities include buildings, agents, people, work sessions/audit, grants, events, projects, audited project portfolio states, Campus priorities and their audit history, fixed-code operational guardrails and their audit history, tasks and bounded blocker metadata, approvals, notes/activity logs, AI controls/calls, workflow artifacts, Library metadata/indexes/inbox, weather/seasonal data, playbooks, and institutional memory.
 
 Durable files live beside the active database:
 
@@ -42,7 +42,7 @@ Durable files live beside the active database:
 - `library/inbox/` — submitted material awaiting cataloging;
 - `library/catalog/` — trusted Library source files.
 
-No `mavis.db` was present in the audited checkout; `library/` and `repository/` directories were present.
+The runtime `mavis.db` is intentionally untracked; `library/` and `repository/` are persistent runtime directories beside it.
 
 ## Role and service modules
 
@@ -75,6 +75,8 @@ No `mavis.db` was present in the audited checkout; `library/` and `repository/` 
 11. Project workflow status and portfolio state are separate. The existing `projects.status` remains the execution/approval/recovery state. `projects.portfolio_state` records long-term relevance as Active Now, Dormant, Nursery / Future Idea, Completed, or Dead / Retired. State changes use an explicit trusted-operator route, require a human reason, and append `project_state_history`; activation from Nursery, Dormant, completed, or unclassified records requires confirmation. Dead / Retired is terminal in Phase 1. No AI or background path changes portfolio state.
 
 12. The v0.9.9→v0.10 migration classifies only legacy `Completed` workflow rows as portfolio Completed and known in-progress workflow rows as provisional Active Now. Other workflow values remain unclassified and are shown as Needs review until a human classifies them. Workflow status values are never rewritten by this migration.
+
+13. Phase 2 adds `campus_priorities` with one optional primary `projects.priority_id` link and seven seeded, application-recognized `operational_guardrails`. Priority creation/editing, Active ranking, limit overrides, retirement, and guardrail changes are explicit trusted-operator actions with bounded audit records. The default Active-priority limit is three; exceeding it warns and requires confirmation but never deactivates another priority. Project activation warnings are calculated from recorded priority links, open Active Now projects, next actions, review dates, and blocker metadata without AI calls or writes. New manually captured ideas and Stella-generated proposals enter Nursery / Future Idea. Phase 2 does not change Daily Steward output or add scheduling, scoring, policy expressions, background jobs, or automatic state changes.
 
 The next contribution layer is intentionally deferred: natural-language capture, exports/dashboards, broader reporting, and any automated communications. Personal/nonprofit visibility and permissions require a separate design before shared access is expanded.
 

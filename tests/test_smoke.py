@@ -5609,6 +5609,10 @@ def test_v0866_chief_duplicate_request_protection_one_project_one_ai_call(tmp_pa
         assert calls["count"] == 1
         with campus.db() as conn:
             assert conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 1
+            proposed = conn.execute("SELECT portfolio_state FROM projects WHERE id=?", (first["project_id"],)).fetchone()
+            assert proposed["portfolio_state"] == "Nursery / Future Idea"
+            history = conn.execute("SELECT new_state,actor FROM project_state_history WHERE project_id=?", (first["project_id"],)).fetchone()
+            assert tuple(history) == ("Nursery / Future Idea", "System")
             assert conn.execute("SELECT COUNT(*) FROM ai_calls WHERE operation='chief_plan' AND status='Success'").fetchone()[0] == 1
             assert conn.execute("SELECT COUNT(*) FROM chief_request_submissions WHERE status='Completed'").fetchone()[0] == 1
     finally:
@@ -9459,3 +9463,190 @@ def test_v010_ui_uses_explicit_portfolio_relevance_and_existing_six_staff():
     assert "Human classification required." in js
     assert "data-project-context" in js and "data-project-state" in js
     assert "Portfolio-state history" in js and "data-task-attention" in js
+
+
+def test_v010_phase2_clean_schema_and_fixed_guardrail_seed(tmp_path, monkeypatch):
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "phase2-clean.db")
+    campus.init_db()
+    with campus.db() as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert {"campus_priorities", "campus_priority_history", "operational_guardrails", "operational_guardrail_history"} <= tables
+        project_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)")}
+        assert "priority_id" in project_columns
+        guardrails = {row["code"]: dict(row) for row in conn.execute("SELECT * FROM operational_guardrails")}
+        assert set(guardrails) == set(campus.GUARDRAIL_DEFINITIONS)
+        assert guardrails["max_active_priorities"]["numeric_value"] == 3
+        assert all(row["enabled"] == 1 for row in guardrails.values())
+
+
+def test_v010_phase2_additive_upgrade_preserves_phase1_project_state(tmp_path, monkeypatch):
+    import sqlite3
+
+    db_path = tmp_path / "phase1-upgrade.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript("""
+        CREATE TABLE projects(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,status TEXT NOT NULL,
+            portfolio_state TEXT,purpose TEXT NOT NULL DEFAULT '',owner_agent_id TEXT,
+            why_it_matters TEXT NOT NULL DEFAULT '',state_reason TEXT NOT NULL DEFAULT '',
+            state_changed_at TEXT,next_review_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL
+        );
+        CREATE TABLE schema_meta(id INTEGER PRIMARY KEY CHECK(id=1),schema_version TEXT NOT NULL,updated_at TEXT NOT NULL);
+        INSERT INTO schema_meta VALUES(1,'0.10','2026-09-30T00:00:00+00:00');
+        INSERT INTO projects(title,status,portfolio_state,purpose,created_at,updated_at)
+        VALUES('Existing Phase 1','Execution Interrupted','Dormant','Preserve this context.','2026-09-30T00:00:00+00:00','2026-09-30T00:00:00+00:00');
+    """)
+    conn.commit(); conn.close()
+    monkeypatch.setattr(campus, "DB_PATH", db_path)
+    campus.init_db()
+    with campus.db() as conn:
+        row = conn.execute("SELECT * FROM projects WHERE title='Existing Phase 1'").fetchone()
+        assert row["status"] == "Execution Interrupted"
+        assert row["portfolio_state"] == "Dormant"
+        assert row["purpose"] == "Preserve this context."
+        assert row["priority_id"] is None
+        assert conn.execute("SELECT COUNT(*) FROM operational_guardrails").fetchone()[0] == 7
+
+
+def test_v010_phase2_priority_lifecycle_limit_override_ranking_and_audit(tmp_path, monkeypatch):
+    import pytest
+
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "priorities.db")
+    campus.init_db()
+    created = []
+    for rank, title in enumerate(("Finish curriculum", "Prepare the land", "Stabilize records"), start=1):
+        result = asyncio.run(campus.api_priority_create(campus.CampusPriorityRequest(
+            title=title, intended_outcome=f"Outcome for {title}", owner_agent_id="chief",
+            status="Active", rank=rank, confirmed=True,
+        )))
+        created.append(result["priority_id"])
+    with pytest.raises(campus.HTTPException) as limit_conflict:
+        asyncio.run(campus.api_priority_create(campus.CampusPriorityRequest(
+            title="Fourth major priority", status="Active", rank=4, confirmed=True,
+        )))
+    assert limit_conflict.value.status_code == 409
+    assert limit_conflict.value.detail["code"] == "max_active_priorities"
+    override = asyncio.run(campus.api_priority_create(campus.CampusPriorityRequest(
+        title="Emergency fourth priority", status="Active", rank=4, confirmed=True, override_active_limit=True,
+    )))
+    assert override["limit_override"]["limit"] == 3
+    fourth = override["priority_id"]
+    with pytest.raises(campus.HTTPException):
+        asyncio.run(campus.api_priority_update(created[0], campus.CampusPriorityRequest(
+            title="Finish curriculum", status="Paused", rank=1,
+        )))
+    asyncio.run(campus.api_priority_reorder(campus.CampusPriorityOrderRequest(
+        priority_ids=[fourth, created[2], created[1], created[0]], confirmed=True,
+    )))
+    asyncio.run(campus.api_priority_update(created[0], campus.CampusPriorityRequest(
+        title="Finish curriculum", intended_outcome="Package is sufficient for now.", owner_agent_id="programs",
+        status="Completed", rank=4, confirmed=True,
+    )))
+    upcoming = asyncio.run(campus.api_priority_create(campus.CampusPriorityRequest(
+        title="Possible later priority", status="Upcoming", rank=20,
+    )))
+    with pytest.raises(campus.HTTPException):
+        asyncio.run(campus.api_priority_update(upcoming["priority_id"], campus.CampusPriorityRequest(
+            title="Possible later priority", status="Retired", rank=20,
+        )))
+    asyncio.run(campus.api_priority_update(upcoming["priority_id"], campus.CampusPriorityRequest(
+        title="Possible later priority", status="Retired", rank=20, confirmed=True,
+    )))
+    with campus.db() as conn:
+        active = list(conn.execute("SELECT id,rank FROM campus_priorities WHERE status='Active' ORDER BY rank"))
+        assert [(row["id"], row["rank"]) for row in active] == [(fourth, 1), (created[2], 2), (created[1], 3)]
+        history = list(conn.execute("SELECT * FROM campus_priority_history ORDER BY id"))
+        assert any(row["action"] == "reordered" for row in history)
+        assert any("overrode" in row["detail"] for row in history)
+        assert all(row["actor"] == "Human" for row in history)
+
+
+def test_v010_phase2_guardrail_disable_requires_confirmation_and_is_audited(tmp_path, monkeypatch):
+    import pytest
+
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "guardrails.db")
+    campus.init_db()
+    with pytest.raises(campus.HTTPException) as unconfirmed:
+        asyncio.run(campus.api_guardrail_update("scope_creep_warning", campus.OperationalGuardrailRequest(enabled=False)))
+    assert unconfirmed.value.status_code == 409
+    result = asyncio.run(campus.api_guardrail_update(
+        "scope_creep_warning", campus.OperationalGuardrailRequest(enabled=False, confirmed=True)
+    ))
+    assert result["additional_ai_calls"] == 0
+    idea = asyncio.run(campus.api_project_idea(campus.ProjectIdeaRequest(title="No scope warning")))
+    activated = asyncio.run(campus.api_project_portfolio_state(
+        idea["project_id"], campus.ProjectPortfolioStateRequest(
+            portfolio_state="Active Now", reason="Human reviewed the proposal.", confirmed=True,
+        ),
+    ))
+    assert "outside_active_priorities" not in {warning["code"] for warning in activated["warnings"]}
+    asyncio.run(campus.api_guardrail_update(
+        "max_active_priorities", campus.OperationalGuardrailRequest(enabled=False, numeric_value=3, confirmed=True)
+    ))
+    for number in range(1, 5):
+        asyncio.run(campus.api_priority_create(campus.CampusPriorityRequest(
+            title=f"Limit disabled {number}", status="Active", rank=number, confirmed=True,
+        )))
+    with campus.db() as conn:
+        guardrail = conn.execute("SELECT * FROM operational_guardrails WHERE code='scope_creep_warning'").fetchone()
+        audit = conn.execute("SELECT * FROM operational_guardrail_history WHERE code='scope_creep_warning'").fetchone()
+        assert guardrail["enabled"] == 0 and guardrail["updated_by"] == "Human"
+        assert audit["previous_enabled"] == 1 and audit["new_enabled"] == 0 and audit["actor"] == "Human"
+
+
+def test_v010_phase2_new_ideas_default_nursery_and_never_auto_activate(tmp_path, monkeypatch):
+    import pytest
+
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "ideas.db")
+    campus.init_db()
+    with campus.db() as conn:
+        before_ai = conn.execute("SELECT COUNT(*) FROM ai_calls").fetchone()[0]
+    idea = asyncio.run(campus.api_project_idea(campus.ProjectIdeaRequest(
+        title="Possible seed library", purpose="Explore a future seed library.", owner_agent_id="research",
+    )))
+    assert idea["portfolio_state"] == "Nursery / Future Idea"
+    with pytest.raises(campus.HTTPException):
+        asyncio.run(campus.api_project_idea(campus.ProjectIdeaRequest(
+            title="Unconfirmed active idea", create_active=True, reason="Interesting.",
+        )))
+    with campus.db() as conn:
+        project = conn.execute("SELECT * FROM projects WHERE id=?", (idea["project_id"],)).fetchone()
+        assert project["portfolio_state"] == "Nursery / Future Idea"
+        assert project["status"] == "Proposed"
+        assert conn.execute("SELECT COUNT(*) FROM ai_calls").fetchone()[0] == before_ai
+
+
+def test_v010_phase2_project_priority_assignment_and_activation_warnings(tmp_path, monkeypatch):
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "project-priority.db")
+    campus.init_db()
+    priority = asyncio.run(campus.api_priority_create(campus.CampusPriorityRequest(
+        title="Current season", intended_outcome="Finish current commitments.", status="Active", rank=1, confirmed=True,
+    )))
+    active = asyncio.run(campus.api_project_idea(campus.ProjectIdeaRequest(
+        title="Existing active work", priority_id=priority["priority_id"], create_active=True,
+        reason="This is the current commitment.", confirmed=True,
+    )))
+    future = asyncio.run(campus.api_project_idea(campus.ProjectIdeaRequest(title="Future expansion")))
+    result = asyncio.run(campus.api_project_portfolio_state(
+        future["project_id"], campus.ProjectPortfolioStateRequest(
+            portfolio_state="Active Now", reason="Human chose to proceed after review.", confirmed=True,
+        ),
+    ))
+    warning_codes = {item["code"] for item in result["warnings"]}
+    assert {"outside_active_priorities", "unfinished_active_work"} <= warning_codes
+    asyncio.run(campus.api_project_context(future["project_id"], campus.ProjectContextRequest(
+        purpose="A bounded expansion.", owner_agent_id="operations", priority_id=priority["priority_id"],
+    )))
+    with campus.db() as conn:
+        assert conn.execute("SELECT priority_id FROM projects WHERE id=?", (future["project_id"],)).fetchone()[0] == priority["priority_id"]
+        assert conn.execute("SELECT COUNT(*) FROM ai_calls").fetchone()[0] == 0
+        assert conn.execute("SELECT portfolio_state FROM projects WHERE id=?", (active["project_id"],)).fetchone()[0] == "Active Now"
+
+
+def test_v010_phase2_ui_exposes_priorities_guardrails_and_nursery_capture():
+    js = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
+    assert "data-campus-priority" in js
+    assert "data-operational-guardrail" in js
+    assert "Capture in Nursery" in js
+    assert "data-priority-move" in js
+    assert "Primary current priority" in js

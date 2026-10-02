@@ -1,8 +1,17 @@
-# Mavis Digital Campus v0.10 — Portfolio-State Normalization
+# Mavis Digital Campus v0.10 — Priorities and Guardrails
 
 ## v0.10 focus
 
-Mavis Digital Campus v0.10 Phase 1 separates long-term portfolio relevance from workflow execution state. Projects now retain their existing workflow `status` while recording a human-governed portfolio state, purpose, canonical staff owner, reason for relevance, and next review date. Portfolio-state changes are deterministic and audited; ambiguous legacy projects remain visibly unclassified until a trusted operator reviews them. Task records gain bounded blocker and optional-work metadata for later attention-management work without adding dependency graphs or scheduling automation.
+Mavis Digital Campus v0.10 Phase 2 adds a small, human-controlled set of Campus priorities and fixed operational guardrails on top of Phase 1 portfolio-state normalization. Each project can reference one primary current priority. Active-priority limits and project-activation warnings are deterministic, never silently change records, and never call AI. Daily Dispatcher and weekly-planning behavior remain deferred to Phase 3.
+
+### Priorities and guardrails
+
+- Campus priorities use Active, Upcoming, Paused, Completed, and Retired states and canonical six-staff ownership.
+- The default maximum is three Active priorities. Exceeding it requires an explicit human override and is recorded in priority history.
+- Fixed guardrail codes cover deliberate activation, Nursery idea capture, completion over expansion, scope-creep warnings, good-enough stopping, and open-time protection; arbitrary executable rules are not supported.
+- New manually captured ideas enter Nursery / Future Idea. Stella-generated project proposals also remain in Nursery until a human deliberately activates them with a reason.
+- Deterministic activation warnings expose work outside current priorities and unfinished Active Now projects without blocking strategically necessary human choices.
+- Good-enough stopping and open-time protection are durable principles only in Phase 2; no milestone or scheduling subsystem was added.
 
 ### Portfolio-state normalization
 
@@ -11,7 +20,7 @@ Mavis Digital Campus v0.10 Phase 1 separates long-term portfolio relevance from 
 - Dead / Retired is a terminal state in v0.10 Phase 1.
 - Workflow statuses, approval gates, recovery behavior, and the existing six-agent staff model remain unchanged.
 - Dormant, Nursery, Dead / Retired, and unclassified projects are excluded from ordinary Daily Steward task and blocker candidates.
-- No Campus priorities, guardrail engine, Daily Dispatcher redesign, weekly planner, or automatic state changes are included in Phase 1.
+- No Daily Dispatcher redesign, weekly planner, scoring engine, automatic reprioritization, or automatic state changes are included in Phase 2.
 
 ### v0.9.9 Drive foundation retained
 
