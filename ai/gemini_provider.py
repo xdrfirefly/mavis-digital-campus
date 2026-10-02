@@ -44,7 +44,7 @@ class GeminiProvider:
             headers={
                 "Content-Type": "application/json",
                 "x-goog-api-key": self.api_key,
-                "User-Agent": "Mavis-Digital-Campus/0.9.9",
+                "User-Agent": "Mavis-Digital-Campus/0.10",
             },
         )
 

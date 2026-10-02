@@ -84,7 +84,25 @@ OPENAI_LIST_PRICES_PER_MILLION = {
 }
 TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4.0
 DEFAULT_DAILY_ESTIMATED_COST_LIMIT_USD = 1.00
-SCHEMA_VERSION = "0.9.9"
+SCHEMA_VERSION = "0.10"
+
+PORTFOLIO_STATES = {
+    "Active Now",
+    "Dormant",
+    "Nursery / Future Idea",
+    "Completed",
+    "Dead / Retired",
+}
+PORTFOLIO_OWNERS = {"chief", "programs", "research", "caretaker", "grants", "operations"}
+LEGACY_ACTIVE_WORKFLOW_STATUSES = {
+    "Active",
+    "Awaiting Revision Approval",
+    "Awaiting Execution Review",
+    "Awaiting Library Decision",
+    "Execution Interrupted",
+    "Needs Revision",
+}
+BLOCKER_TYPES = {"Person", "Date", "Approval", "Dependency", "Condition", "Other"}
 LIBRARY_MATERIAL_TYPES = ("Lesson Plan", "Instructor Notes", "Worksheet", "Slideshow", "Handout", "Supply List", "Photo", "Video", "Audio", "Document", "Spreadsheet", "Archive", "Reference", "Other")
 PROGRAMS_LIBRARY_DECISIONS = ("reuse", "revise", "create_new")
 GRANT_STATUSES = ("Discovered", "Reviewing", "Pursue", "Preparing", "Submitted", "Awarded", "Declined", "Passed")
@@ -361,9 +379,30 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
                 status TEXT NOT NULL,
+                portfolio_state TEXT CHECK(
+                    portfolio_state IN ('Active Now','Dormant','Nursery / Future Idea','Completed','Dead / Retired')
+                ) DEFAULT 'Active Now',
+                purpose TEXT NOT NULL DEFAULT '',
+                owner_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+                why_it_matters TEXT NOT NULL DEFAULT '',
+                state_reason TEXT NOT NULL DEFAULT '',
+                state_changed_at TEXT,
+                next_review_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS project_state_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                previous_state TEXT,
+                new_state TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_project_state_history_project
+                ON project_state_history(project_id,created_at DESC,id DESC);
 
             CREATE TABLE IF NOT EXISTS tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -374,6 +413,10 @@ def init_db() -> None:
                 sequence INTEGER NOT NULL,
                 brief TEXT,
                 result TEXT,
+                blocker_type TEXT,
+                blocked_reason TEXT NOT NULL DEFAULT '',
+                blocked_until TEXT,
+                is_optional INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -845,9 +888,69 @@ def init_db() -> None:
         agent_columns = {row[1] for row in conn.execute("PRAGMA table_info(agents)").fetchall()}
         if "home_building_id" not in agent_columns:
             conn.execute("ALTER TABLE agents ADD COLUMN home_building_id TEXT")
+        project_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        portfolio_column_added = "portfolio_state" not in project_columns
+        for column, ddl in {
+            "portfolio_state": "TEXT CHECK(portfolio_state IN ('Active Now','Dormant','Nursery / Future Idea','Completed','Dead / Retired'))",
+            "purpose": "TEXT NOT NULL DEFAULT ''",
+            "owner_agent_id": "TEXT REFERENCES agents(id) ON DELETE SET NULL",
+            "why_it_matters": "TEXT NOT NULL DEFAULT ''",
+            "state_reason": "TEXT NOT NULL DEFAULT ''",
+            "state_changed_at": "TEXT",
+            "next_review_at": "TEXT",
+        }.items():
+            if column not in project_columns:
+                conn.execute(f"ALTER TABLE projects ADD COLUMN {column} {ddl}")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_projects_portfolio_state "
+            "ON projects(portfolio_state,updated_at DESC,id DESC)"
+        )
+
+        # v0.10 preserves workflow status and classifies only legacy rows whose
+        # existing workflow state is unambiguous. Everything else remains NULL
+        # and is surfaced for trusted-operator review.
+        if portfolio_column_added:
+            legacy_projects = conn.execute(
+                "SELECT id,status,updated_at FROM projects ORDER BY id"
+            ).fetchall()
+            for project in legacy_projects:
+                workflow_status = str(project["status"] or "")
+                if workflow_status == "Completed":
+                    portfolio_state = "Completed"
+                    reason = "v0.10 migration: workflow status was clearly completed."
+                elif workflow_status in LEGACY_ACTIVE_WORKFLOW_STATUSES:
+                    portfolio_state = "Active Now"
+                    reason = (
+                        "v0.10 provisional migration: workflow status was clearly in progress; "
+                        "a human may reclassify it."
+                    )
+                else:
+                    continue
+                changed_at = project["updated_at"] or utc_now()
+                conn.execute(
+                    "UPDATE projects SET portfolio_state=?,state_reason=?,state_changed_at=? WHERE id=?",
+                    (portfolio_state, reason, changed_at, int(project["id"])),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO project_state_history(
+                        project_id,previous_state,new_state,reason,actor,created_at
+                    ) VALUES(?,?,?,?,?,?)
+                    """,
+                    (int(project["id"]), None, portfolio_state, reason, "System Migration", changed_at),
+                )
+
         task_columns = {row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
         if "brief" not in task_columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN brief TEXT")
+        for column, ddl in {
+            "blocker_type": "TEXT",
+            "blocked_reason": "TEXT NOT NULL DEFAULT ''",
+            "blocked_until": "TEXT",
+            "is_optional": "INTEGER NOT NULL DEFAULT 0",
+        }.items():
+            if column not in task_columns:
+                conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {ddl}")
 
         # v0.8.7: conversational Poe needs an explicit primary-person alias
         # for “me / I / my” and a truthful date-only mode for remembered hours.
@@ -3475,6 +3578,10 @@ def approval_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         int(row["id"]): row["status"]
         for row in rows(conn, "SELECT id,status FROM projects")
     }
+    project_portfolio_state = {
+        int(row["id"]): row["portfolio_state"]
+        for row in rows(conn, "SELECT id,portfolio_state FROM projects")
+    }
 
     review_rows = rows(
         conn,
@@ -3502,6 +3609,7 @@ def approval_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     for approval in approval_items:
         item = dict(approval)
         project_id = int(item["project_id"])
+        item["portfolio_state"] = project_portfolio_state.get(project_id)
         review = review_by_project.get(project_id)
         title = str(item.get("title") or "")
         is_final_review = bool(review) and title.startswith("Chief final review:")
@@ -3717,23 +3825,31 @@ def executive_summary(conn: sqlite3.Connection) -> dict[str, Any]:
             """
             SELECT COUNT(*)
             FROM projects
-            WHERE status IN ('Active','Awaiting Approval','Awaiting Revision Approval','Awaiting Execution Review','Awaiting Library Decision')
+            WHERE portfolio_state='Active Now'
             """
         ).fetchone()[0]
     )
     revision_projects = int(
         conn.execute(
-            "SELECT COUNT(*) FROM projects WHERE status='Needs Revision'"
+            "SELECT COUNT(*) FROM projects WHERE status='Needs Revision' AND portfolio_state='Active Now'"
         ).fetchone()[0]
     )
     blocked_tasks = int(
         conn.execute(
-            "SELECT COUNT(*) FROM tasks WHERE status='Blocked'"
+            """
+            SELECT COUNT(*) FROM tasks t
+            JOIN projects p ON p.id=t.project_id
+            WHERE t.status='Blocked' AND p.portfolio_state='Active Now'
+            """
         ).fetchone()[0]
     )
     library_decisions = int(
         conn.execute(
-            "SELECT COUNT(*) FROM programs_library_preflights WHERE status='Pending'"
+            """
+            SELECT COUNT(*) FROM programs_library_preflights plp
+            JOIN projects p ON p.id=plp.project_id
+            WHERE plp.status='Pending' AND p.portfolio_state='Active Now'
+            """
         ).fetchone()[0]
     )
 
@@ -3832,7 +3948,7 @@ def executive_summary(conn: sqlite3.Connection) -> dict[str, Any]:
         """
         SELECT id,title,status
         FROM projects
-        WHERE status='Needs Revision'
+        WHERE status='Needs Revision' AND portfolio_state='Active Now'
         ORDER BY id DESC
         """,
     ):
@@ -3872,7 +3988,7 @@ def executive_summary(conn: sqlite3.Connection) -> dict[str, Any]:
         FROM programs_library_preflights plp
         JOIN tasks t ON t.id=plp.task_id
         JOIN projects p ON p.id=plp.project_id
-        WHERE plp.status='Pending'
+        WHERE plp.status='Pending' AND p.portfolio_state='Active Now'
         ORDER BY plp.updated_at DESC,plp.task_id DESC
         """,
     ):
@@ -3891,10 +4007,11 @@ def executive_summary(conn: sqlite3.Connection) -> dict[str, Any]:
     for task in rows(
         conn,
         """
-        SELECT id,project_id,title
-        FROM tasks
-        WHERE status='Blocked'
-        ORDER BY id DESC
+        SELECT t.id,t.project_id,t.title
+        FROM tasks t
+        JOIN projects p ON p.id=t.project_id
+        WHERE t.status='Blocked' AND p.portfolio_state='Active Now'
+        ORDER BY t.id DESC
         """,
     ):
         attention.append(
@@ -4283,7 +4400,8 @@ def daily_steward(conn: sqlite3.Connection, target_date: date | None = None) -> 
         SELECT e.id,e.title,e.event_date,e.project_id
         FROM events e
         JOIN projects p ON p.id=e.project_id
-        WHERE e.status='Scheduled' AND e.project_id IS NOT NULL AND p.status='Active'
+        WHERE e.status='Scheduled' AND e.project_id IS NOT NULL
+          AND p.status='Active' AND p.portfolio_state='Active Now'
           AND e.event_date>=? AND e.event_date<=?
         ORDER BY e.event_date,e.id
     """, (local_today.isoformat(), commitment_horizon)):
@@ -4309,7 +4427,11 @@ def daily_steward(conn: sqlite3.Connection, target_date: date | None = None) -> 
 
     # Human gates outrank ordinary work because the rest of the Campus can be waiting on them.
     pending = approval_rows(conn)
-    for approval in [a for a in pending if a.get("status") == "Pending"][:4]:
+    operational_pending = [
+        a for a in pending
+        if a.get("status") == "Pending" and a.get("portfolio_state") == "Active Now"
+    ]
+    for approval in operational_pending[:4]:
         add(
             110, kind="decision", agent_id="chief", title=str(approval.get("title") or "Review waiting decision"),
             why="A human decision is waiting and can hold downstream work in place.",
@@ -4321,7 +4443,7 @@ def daily_steward(conn: sqlite3.Connection, target_date: date | None = None) -> 
     for task in rows(conn, """
         SELECT t.id,t.project_id,t.title,t.status,t.owner_agent_id,t.sequence,p.title AS project_title,p.status AS project_status
         FROM tasks t JOIN projects p ON p.id=t.project_id
-        WHERE t.status='Blocked'
+        WHERE t.status='Blocked' AND p.portfolio_state='Active Now'
         ORDER BY p.updated_at DESC,t.sequence,t.id LIMIT 5
     """):
         add(
@@ -4330,7 +4452,7 @@ def daily_steward(conn: sqlite3.Connection, target_date: date | None = None) -> 
             first_action="Open the blocked task and identify the single missing decision, input, or prerequisite.",
             task_id=task.get("id"), project_id=task.get("project_id"),
         )
-    for project in rows(conn, "SELECT id,title,status FROM projects WHERE status='Execution Interrupted' ORDER BY updated_at DESC LIMIT 3"):
+    for project in rows(conn, "SELECT id,title,status FROM projects WHERE status='Execution Interrupted' AND portfolio_state='Active Now' ORDER BY updated_at DESC LIMIT 3"):
         add(
             101, kind="recovery", agent_id="chief", title=f"Resume {project['title']}",
             why="The Campus recorded an interrupted workflow; completed work is preserved but the workflow needs a deliberate resume decision.",
@@ -4344,6 +4466,7 @@ def daily_steward(conn: sqlite3.Connection, target_date: date | None = None) -> 
         FROM grants g LEFT JOIN projects p ON p.id=g.project_id
         WHERE g.deadline IS NOT NULL AND g.deadline>=? AND g.deadline<=?
           AND g.status IN ('Discovered','Reviewing','Pursue','Preparing')
+          AND (g.project_id IS NULL OR p.portfolio_state='Active Now')
         ORDER BY g.deadline,g.id LIMIT 10
     """, (local_today.isoformat(), grant_horizon))
     for grant in grants:
@@ -4386,6 +4509,7 @@ def daily_steward(conn: sqlite3.Connection, target_date: date | None = None) -> 
         FROM tasks t JOIN projects p ON p.id=t.project_id
         WHERE t.status IN ('Waiting','In Progress','Library Review')
           AND p.status IN ('Active','Awaiting Library Decision')
+          AND p.portfolio_state='Active Now'
         ORDER BY p.updated_at DESC,t.sequence,t.id
     """)
     seen_projects: set[int] = set()
@@ -4482,17 +4606,28 @@ def daily_steward(conn: sqlite3.Connection, target_date: date | None = None) -> 
     open_count = int(conn.execute("SELECT COUNT(*) FROM work_sessions WHERE ended_at IS NULL").fetchone()[0])
     if open_count and not primary_open:
         watch.append({"source":"Poe", "title":"Active work session", "detail":f"{open_count} person(s) are currently clocked in."})
-    due_memory = int(conn.execute("SELECT COUNT(*) FROM institutional_memory WHERE status='Active' AND review_due_at IS NOT NULL AND review_due_at<=?", (utc_now(),)).fetchone()[0])
+    due_memory = int(conn.execute("""
+        SELECT COUNT(*) FROM institutional_memory m
+        LEFT JOIN projects p ON p.id=m.project_id
+        WHERE m.status='Active' AND m.review_due_at IS NOT NULL AND m.review_due_at<=?
+          AND (m.project_id IS NULL OR p.portfolio_state='Active Now')
+    """, (utc_now(),)).fetchone()[0])
     if due_memory:
         watch.append({"source":"Rose", "title":"Institutional memory", "detail":f"{due_memory} memory item(s) are due for review; this is a watch item unless it blocks current work."})
 
     counts_by_owner = {str(r["owner_agent_id"] or "chief"): int(r["n"]) for r in conn.execute("""
-        SELECT owner_agent_id,COUNT(*) AS n FROM tasks
-        WHERE status NOT IN ('Completed','Superseded') GROUP BY owner_agent_id
+        SELECT t.owner_agent_id,COUNT(*) AS n FROM tasks t
+        JOIN projects p ON p.id=t.project_id
+        WHERE t.status NOT IN ('Completed','Superseded') AND p.portfolio_state='Active Now'
+        GROUP BY t.owner_agent_id
     """).fetchall()}
-    active_grants = int(conn.execute("SELECT COUNT(*) FROM grants WHERE status IN ('Discovered','Reviewing','Pursue','Preparing')").fetchone()[0])
+    active_grants = int(conn.execute("""
+        SELECT COUNT(*) FROM grants g LEFT JOIN projects p ON p.id=g.project_id
+        WHERE g.status IN ('Discovered','Reviewing','Pursue','Preparing')
+          AND (g.project_id IS NULL OR p.portfolio_state='Active Now')
+    """).fetchone()[0])
     staff_inputs = [
-        {"agent":"Stella","lane":"Executive gates & calendar","status":f"{len([a for a in pending if a.get('status')=='Pending'])} decision(s) waiting · {len(today_events)} calendar event(s) today"},
+        {"agent":"Stella","lane":"Executive gates & calendar","status":f"{len(operational_pending)} active-project decision(s) waiting · {len(today_events)} calendar event(s) today"},
         {"agent":"Percy","lane":"Programs","status":f"{counts_by_owner.get('programs',0)} open task(s)"},
         {"agent":"Rose","lane":"Research & memory","status":f"{counts_by_owner.get('research',0)} open research task(s) · {due_memory} memory review(s)"},
         {"agent":"Stewart","lane":"Weather, season & land","status":f"{env.get('season','Season')} · {weather.get('summary')}"},
@@ -4547,14 +4682,18 @@ def executive_briefing(conn: sqlite3.Connection) -> dict[str, Any]:
     project_rows = rows(
         conn,
         """
-        SELECT p.id,p.title,p.status,p.updated_at,
+        SELECT p.id,p.title,p.status,p.portfolio_state,p.updated_at,
                COUNT(t.id) AS task_count,
                SUM(CASE WHEN t.status='Completed' THEN 1 ELSE 0 END) AS completed_tasks,
                SUM(CASE WHEN t.status='Blocked' THEN 1 ELSE 0 END) AS blocked_tasks
         FROM projects p
         LEFT JOIN tasks t ON t.project_id=p.id
         GROUP BY p.id
-        ORDER BY CASE p.status
+        ORDER BY CASE
+          WHEN p.portfolio_state='Active Now' THEN 0 WHEN p.portfolio_state IS NULL THEN 1
+          WHEN p.portfolio_state='Dormant' THEN 2 WHEN p.portfolio_state='Nursery / Future Idea' THEN 3
+          WHEN p.portfolio_state='Completed' THEN 4 ELSE 5 END,
+        CASE p.status
           WHEN 'Awaiting Approval' THEN 0 WHEN 'Awaiting Revision Approval' THEN 0
           WHEN 'Awaiting Execution Review' THEN 1 WHEN 'Needs Revision' THEN 1
           WHEN 'Execution Interrupted' THEN 1 WHEN 'Active' THEN 2 ELSE 3 END,
@@ -4575,6 +4714,7 @@ def executive_briefing(conn: sqlite3.Connection) -> dict[str, Any]:
             FROM institutional_memory m
             LEFT JOIN projects p ON p.id=m.project_id
             WHERE m.status='Active' AND m.review_due_at IS NOT NULL AND m.review_due_at<=?
+              AND (m.project_id IS NULL OR p.portfolio_state='Active Now')
             ORDER BY CASE m.importance WHEN 'Core' THEN 0 ELSE 1 END,m.review_due_at,m.id
             LIMIT 10
             """,
@@ -4620,11 +4760,15 @@ def executive_briefing(conn: sqlite3.Connection) -> dict[str, Any]:
         FROM grants g LEFT JOIN projects p ON p.id=g.project_id
         WHERE g.deadline IS NOT NULL AND g.deadline>=? AND g.deadline<=?
           AND g.status IN ('Discovered','Reviewing','Pursue','Preparing')
+          AND (g.project_id IS NULL OR p.portfolio_state='Active Now')
         ORDER BY g.deadline,g.id LIMIT 8
         """,
         (local_today.isoformat(), grant_horizon),
     )
-    interrupted = [p for p in project_rows if p.get("status") == "Execution Interrupted"]
+    interrupted = [
+        p for p in project_rows
+        if p.get("status") == "Execution Interrupted" and p.get("portfolio_state") == "Active Now"
+    ]
     priorities: list[dict[str, Any]] = [dict(item) for item in executive.get("attention", [])]
     for project in interrupted:
         priorities.append({
@@ -5142,7 +5286,11 @@ def _poe_resolve_project(conn: sqlite3.Connection, command: str) -> sqlite3.Row 
     norm = _poe_normalize(command)
     if not norm:
         return None
-    projects = conn.execute("SELECT * FROM projects ORDER BY CASE status WHEN 'Active' THEN 0 ELSE 1 END,id DESC").fetchall()
+    projects = conn.execute("""
+        SELECT * FROM projects
+        ORDER BY CASE WHEN portfolio_state='Active Now' THEN 0 ELSE 1 END,
+                 CASE status WHEN 'Active' THEN 0 ELSE 1 END,id DESC
+    """).fetchall()
     padded = f" {norm} "
     direct = []
     for project in projects:
@@ -5868,7 +6016,24 @@ def current_state() -> dict[str, Any]:
             "grant_summary": grant_summary(conn),
             "events": calendar_event_rows(conn),
             "calendar_summary": calendar_summary(conn),
-            "projects": rows(conn, "SELECT * FROM projects ORDER BY id DESC"),
+            "projects": rows(
+                conn,
+                """
+                SELECT * FROM projects
+                ORDER BY CASE
+                    WHEN portfolio_state='Active Now' THEN 0
+                    WHEN portfolio_state IS NULL THEN 1
+                    WHEN portfolio_state='Dormant' THEN 2
+                    WHEN portfolio_state='Nursery / Future Idea' THEN 3
+                    WHEN portfolio_state='Completed' THEN 4
+                    ELSE 5 END,
+                    id DESC
+                """,
+            ),
+            "project_state_history": rows(
+                conn,
+                "SELECT * FROM project_state_history ORDER BY created_at DESC,id DESC",
+            ),
             "tasks": rows(conn, "SELECT * FROM tasks ORDER BY project_id DESC,sequence,id"),
             "approvals": approval_rows(conn),
             "notes": rows(conn, "SELECT * FROM notes ORDER BY id DESC LIMIT 100"),
@@ -7399,6 +7564,19 @@ class ProjectRequest(BaseModel):
     force_new: bool = False
 
 
+class ProjectContextRequest(BaseModel):
+    purpose: str = ""
+    owner_agent_id: str | None = None
+    why_it_matters: str = ""
+    next_review_at: str | None = None
+
+
+class ProjectPortfolioStateRequest(BaseModel):
+    portfolio_state: str
+    reason: str
+    confirmed: bool = False
+
+
 class ApprovalDecision(BaseModel):
     decision: str
     note: str = ""
@@ -7710,6 +7888,13 @@ class EventRequest(BaseModel):
 
 class TaskStatusRequest(BaseModel):
     status: str
+
+
+class TaskAttentionRequest(BaseModel):
+    blocker_type: str | None = None
+    blocked_reason: str = ""
+    blocked_until: str | None = None
+    is_optional: bool = False
 
 
 class AIBudgetRequest(BaseModel):
@@ -10869,10 +11054,30 @@ async def _api_chief_plan_locked(req: ProjectRequest) -> dict[str, Any]:
         with db() as conn:
             reset_agents(conn)
             cur = conn.execute(
-                "INSERT INTO projects(title,status,created_at,updated_at) VALUES(?,?,?,?)",
-                (plan["project_title"], "Awaiting Approval", now, now),
+                """
+                INSERT INTO projects(
+                    title,status,portfolio_state,purpose,owner_agent_id,state_reason,
+                    state_changed_at,created_at,updated_at
+                ) VALUES(?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    plan["project_title"], "Awaiting Approval", "Active Now",
+                    str(plan.get("summary") or "")[:1200], "chief",
+                    "Human requested Stella to prepare this project plan.", now, now, now,
+                ),
             )
             project_id = int(cur.lastrowid)
+            conn.execute(
+                """
+                INSERT INTO project_state_history(
+                    project_id,previous_state,new_state,reason,actor,created_at
+                ) VALUES(?,?,?,?,?,?)
+                """,
+                (
+                    project_id, None, "Active Now",
+                    "Human requested Stella to prepare this project plan.", "Human", now,
+                ),
+            )
 
             for sequence, task in enumerate(plan["tasks"], start=1):
                 conn.execute(
@@ -11081,8 +11286,30 @@ async def api_demo_start(req: ProjectRequest) -> dict[str, Any]:
     now = utc_now()
     with db() as conn:
         reset_agents(conn)
-        cur = conn.execute("INSERT INTO projects(title,status,created_at,updated_at) VALUES(?,?,?,?)", (title, "Active", now, now))
+        cur = conn.execute(
+            """
+            INSERT INTO projects(
+                title,status,portfolio_state,purpose,owner_agent_id,state_reason,
+                state_changed_at,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                title, "Active", "Active Now", title, "chief",
+                "Human explicitly started the demonstration project.", now, now, now,
+            ),
+        )
         project_id = int(cur.lastrowid)
+        conn.execute(
+            """
+            INSERT INTO project_state_history(
+                project_id,previous_state,new_state,reason,actor,created_at
+            ) VALUES(?,?,?,?,?,?)
+            """,
+            (
+                project_id, None, "Active Now",
+                "Human explicitly started the demonstration project.", "Human", now,
+            ),
+        )
         task_specs = [
             ("intake", "Triage request and create work plan", "chief", 1),
             ("research", "Research physical and digital document preservation", "research", 2),
@@ -11122,6 +11349,113 @@ async def api_project_note(project_id: int, req: NoteRequest) -> dict[str, Any]:
     return {"status": "saved", "note_id": note_id}
 
 
+@app.post("/api/projects/{project_id}/context")
+async def api_project_context(project_id: int, req: ProjectContextRequest) -> dict[str, Any]:
+    purpose = " ".join(str(req.purpose or "").split()).strip()[:1200]
+    why_it_matters = " ".join(str(req.why_it_matters or "").split()).strip()[:1200]
+    owner_agent_id = str(req.owner_agent_id or "").strip() or None
+    if owner_agent_id not in PORTFOLIO_OWNERS and owner_agent_id is not None:
+        raise HTTPException(status_code=400, detail="Project owner must be one of the six existing Campus staff members.")
+    next_review_at = str(req.next_review_at or "").strip() or None
+    if next_review_at:
+        try:
+            next_review_at = date.fromisoformat(next_review_at).isoformat()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Next review date must use YYYY-MM-DD.") from exc
+
+    with db() as conn:
+        project = conn.execute("SELECT id,title FROM projects WHERE id=?", (project_id,)).fetchone()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        now = utc_now()
+        conn.execute(
+            """
+            UPDATE projects
+            SET purpose=?,owner_agent_id=?,why_it_matters=?,next_review_at=?,updated_at=?
+            WHERE id=?
+            """,
+            (purpose, owner_agent_id, why_it_matters, next_review_at, now, project_id),
+        )
+        log(conn, "project_context", "Human", f"Updated project context: {project['title']}")
+    await hub.broadcast()
+    return {"status": "updated", "project_id": project_id}
+
+
+PROJECT_PORTFOLIO_TRANSITIONS: dict[str | None, set[str]] = {
+    None: set(PORTFOLIO_STATES),
+    "Active Now": {"Dormant", "Completed", "Dead / Retired"},
+    "Dormant": {"Active Now", "Nursery / Future Idea", "Dead / Retired"},
+    "Nursery / Future Idea": {"Active Now", "Dormant", "Dead / Retired"},
+    "Completed": {"Active Now", "Dead / Retired"},
+    "Dead / Retired": set(),
+}
+
+
+@app.post("/api/projects/{project_id}/portfolio-state")
+async def api_project_portfolio_state(project_id: int, req: ProjectPortfolioStateRequest) -> dict[str, Any]:
+    new_state = " ".join(str(req.portfolio_state or "").split()).strip()
+    if new_state not in PORTFOLIO_STATES:
+        raise HTTPException(status_code=400, detail="Unknown portfolio state.")
+    reason = " ".join(str(req.reason or "").split()).strip()[:1000]
+    if not reason:
+        raise HTTPException(status_code=400, detail="A human reason is required for every portfolio-state change.")
+    if workflow_task and not workflow_task.done():
+        raise HTTPException(status_code=409, detail="Wait until the running Campus workflow pauses before changing portfolio state.")
+
+    with db() as conn:
+        project = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        previous_state = str(project["portfolio_state"] or "").strip() or None
+        if new_state == previous_state:
+            raise HTTPException(status_code=409, detail="The project is already in that portfolio state.")
+        if new_state not in PROJECT_PORTFOLIO_TRANSITIONS.get(previous_state, set()):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Portfolio transition from {previous_state or 'Needs Review'} to {new_state} is not allowed.",
+            )
+        confirmation_required = (
+            previous_state is None
+            or new_state == "Dead / Retired"
+            or (new_state == "Active Now" and previous_state in {"Dormant", "Nursery / Future Idea", "Completed"})
+        )
+        if confirmation_required and not req.confirmed:
+            raise HTTPException(status_code=409, detail="Explicit trusted-operator confirmation is required for this change.")
+
+        now = utc_now()
+        conn.execute(
+            """
+            UPDATE projects
+            SET portfolio_state=?,state_reason=?,state_changed_at=?,updated_at=?
+            WHERE id=?
+            """,
+            (new_state, reason, now, now, project_id),
+        )
+        cursor = conn.execute(
+            """
+            INSERT INTO project_state_history(
+                project_id,previous_state,new_state,reason,actor,created_at
+            ) VALUES(?,?,?,?,?,?)
+            """,
+            (project_id, previous_state, new_state, reason, "Human", now),
+        )
+        log(
+            conn,
+            "portfolio_state",
+            "Human",
+            f"Changed portfolio state for {project['title']}: {previous_state or 'Needs Review'} → {new_state}.",
+        )
+        history_id = int(cursor.lastrowid)
+    await hub.broadcast()
+    return {
+        "status": "updated",
+        "project_id": project_id,
+        "portfolio_state": new_state,
+        "history_id": history_id,
+        "additional_ai_calls": 0,
+    }
+
+
 @app.post("/api/tasks/{task_id}/notes")
 async def api_task_note(task_id: int, req: NoteRequest) -> dict[str, Any]:
     body = req.body.strip()
@@ -11150,6 +11484,8 @@ async def api_revision_plan(project_id: int) -> dict[str, Any]:
         ).fetchone()
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
+        if project["portfolio_state"] != "Active Now":
+            raise HTTPException(status_code=409, detail="Only an Active Now project can enter revision planning.")
         if project["status"] != "Needs Revision":
             raise HTTPException(
                 status_code=409,
@@ -11549,6 +11885,36 @@ async def api_task_status(task_id: int, req: TaskStatusRequest) -> dict[str, Any
     return {"status": req.status}
 
 
+@app.post("/api/tasks/{task_id}/attention")
+async def api_task_attention(task_id: int, req: TaskAttentionRequest) -> dict[str, Any]:
+    blocker_type = str(req.blocker_type or "").strip() or None
+    if blocker_type not in BLOCKER_TYPES and blocker_type is not None:
+        raise HTTPException(status_code=400, detail="Unknown blocker type.")
+    blocked_reason = " ".join(str(req.blocked_reason or "").split()).strip()[:1000]
+    blocked_until = str(req.blocked_until or "").strip() or None
+    if blocked_until:
+        try:
+            blocked_until = date.fromisoformat(blocked_until).isoformat()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Blocked-until date must use YYYY-MM-DD.") from exc
+
+    with db() as conn:
+        task = conn.execute("SELECT id,title FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        conn.execute(
+            """
+            UPDATE tasks
+            SET blocker_type=?,blocked_reason=?,blocked_until=?,is_optional=?,updated_at=?
+            WHERE id=?
+            """,
+            (blocker_type, blocked_reason, blocked_until, int(req.is_optional), utc_now(), task_id),
+        )
+        log(conn, "task_attention", "Human", f"Updated attention context: {task['title']}")
+    await hub.broadcast()
+    return {"status": "updated", "task_id": task_id, "additional_ai_calls": 0}
+
+
 @app.post("/api/projects/{project_id}/resume")
 async def api_project_resume(project_id: int) -> dict[str, Any]:
     global workflow_task
@@ -11572,6 +11938,8 @@ async def api_project_resume(project_id: int) -> dict[str, Any]:
                 status_code=409,
                 detail="Only an interrupted project can be resumed with this recovery action.",
             )
+        if project["portfolio_state"] != "Active Now":
+            raise HTTPException(status_code=409, detail="Classify this project as Active Now before resuming its workflow.")
 
         pending_final = conn.execute(
             """
@@ -11717,6 +12085,16 @@ async def api_approval_decide(approval_id: int, req: ApprovalDecision) -> dict[s
         is_final_review = title.startswith("Chief final review:")
         status = "Approved" if decision == "approve" else "Changes Requested"
         now = utc_now()
+
+        if (
+            decision == "approve"
+            and (is_revision_plan or old_project_status == "Awaiting Approval")
+            and project["portfolio_state"] != "Active Now"
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Classify this project as Active Now with a human reason before authorizing workflow execution.",
+            )
 
         if decision == "changes":
             new_project_status = "Needs Revision"

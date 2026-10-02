@@ -1,6 +1,6 @@
-// v0.9.9 — explicit Google Drive snapshots into Library quarantine.
-import { worldConfig } from './world-config.js?v=099';
-import { assets, forestPlacements, worldProps } from './world-assets.js?v=099';
+// v0.10 — portfolio-state normalization with the v0.9.9 Drive boundary retained.
+import { worldConfig } from './world-config.js?v=010';
+import { assets, forestPlacements, worldProps } from './world-assets.js?v=010';
 import { createCamera } from './camera.js';
 
 const els = {
@@ -441,7 +441,9 @@ function fmtTime(iso, includeDate=false){if(!iso)return '';const d=new Date(iso)
 function notesForProject(projectId){return (state?.notes||[]).filter(n=>n.project_id===Number(projectId)&&n.task_id==null);}
 function notesForTask(taskId){return (state?.notes||[]).filter(n=>n.task_id===Number(taskId));}
 function projectTasks(projectId){return (state?.tasks||[]).filter(t=>t.project_id===Number(projectId)).sort((a,b)=>a.sequence-b.sequence);}
-function currentProject(){return state?.projects?.[0] || null;}
+function currentProject(){return (state?.projects||[]).find(p=>p.portfolio_state==='Active Now')||null;}
+function portfolioStateLabel(project){return project?.portfolio_state||'Needs review';}
+function projectStateHistory(projectId){return (state?.project_state_history||[]).filter(x=>Number(x.project_id)===Number(projectId));}
 function statusClass(status=''){return status.toLowerCase().replaceAll(' ','-');}
 function statusIcon(status=''){
   const s=status.toLowerCase();
@@ -1390,11 +1392,12 @@ function drawerPlaybooks(){
 
 function drawerProjects(){
   if(!state.projects.length)return '<p>No projects yet. Ask the Campus for help, and create a project only when the work truly needs one.</p>';
-  return `<div class="drawer-stack">${state.projects.map(p=>{const tasks=projectTasks(p.id);const done=tasks.filter(t=>t.status==='Completed').length;return `<button type="button" class="project-card-button" data-open-project="${p.id}"><div><strong>${esc(p.title)}</strong><small>${esc(p.status)} · ${done}/${tasks.length} tasks complete</small></div><span>›</span></button>`;}).join('')}</div>`;
+  return `<div class="drawer-stack">${state.projects.map(p=>{const tasks=projectTasks(p.id);const done=tasks.filter(t=>t.status==='Completed').length;return `<button type="button" class="project-card-button" data-open-project="${p.id}"><div><strong>${esc(p.title)}</strong><small>${esc(portfolioStateLabel(p))} portfolio · ${esc(p.status)} workflow · ${done}/${tasks.length} tasks complete</small></div><span>›</span></button>`;}).join('')}</div>`;
 }
 function drawerProject(id){
   const p=projectById(id);if(!p)return '<p>Project not found.</p>';
   const tasks=projectTasks(p.id), notes=notesForProject(p.id), approvals=state.approvals.filter(a=>Number(a.project_id)===Number(p.id));
+  const stateHistory=projectStateHistory(p.id),owner=agentById(p.owner_agent_id);
   const projectMemories=memoriesForProject(p.id).filter(m=>m.status==='Active');
   const plan=(state.chief_plans||[]).find(x=>Number(x.project_id)===Number(p.id));
   const run=(state.workflow_runs||[]).find(x=>Number(x.project_id)===Number(p.id));
@@ -1413,6 +1416,23 @@ function drawerProject(id){
   const missingExpected=expected.filter(item=>!producedTypes.has(item.type));
   const parseList=value=>{try{return JSON.parse(value||'[]')}catch{return[]}};
   const criteria=plan?parseList(plan.success_criteria_json):[], questions=plan?parseList(plan.questions_json):[], risks=plan?parseList(plan.risk_notes_json):[];
+  const transitionMap={
+    'Needs review':['Active Now','Dormant','Nursery / Future Idea','Completed','Dead / Retired'],
+    'Active Now':['Dormant','Completed','Dead / Retired'],
+    'Dormant':['Active Now','Nursery / Future Idea','Dead / Retired'],
+    'Nursery / Future Idea':['Active Now','Dormant','Dead / Retired'],
+    'Completed':['Active Now','Dead / Retired'],
+    'Dead / Retired':[]
+  };
+  const portfolioLabel=portfolioStateLabel(p),stateTargets=transitionMap[portfolioLabel]||[];
+  const ownerOptions=(state.agents||[]).filter(a=>['chief','programs','research','caretaker','grants','operations'].includes(a.id)).map(a=>`<option value="${esc(a.id)}"${p.owner_agent_id===a.id?' selected':''}>${esc(a.name)} · ${esc(a.role)}</option>`).join('');
+  const contextHtml=`<section class="drawer-section project-portfolio-context"><div class="section-row"><h4>Portfolio context</h4><span>${esc(portfolioLabel)}</span></div>
+    ${!p.portfolio_state?'<div class="output-empty"><strong>Human classification required.</strong><span>The v0.10 migration could not safely infer this project’s portfolio state.</span></div>':''}
+    <div class="management-grid"><div class="management-stat"><span>Portfolio state</span><strong>${esc(portfolioLabel)}</strong></div><div class="management-stat"><span>Workflow status</span><strong>${esc(p.status)}</strong></div><div class="management-stat"><span>Owner</span><strong>${esc(owner?.name||'Not assigned')}</strong></div><div class="management-stat"><span>Next review</span><strong>${esc(p.next_review_at||'Not set')}</strong></div></div>
+    ${p.state_reason?`<p><strong>State reason:</strong> ${esc(p.state_reason)}</p>`:''}
+    <form data-project-context="${p.id}" class="memory-form"><label>Purpose<textarea name="purpose" rows="3" maxlength="1200">${esc(p.purpose||'')}</textarea></label><label>Owner<select name="owner_agent_id"><option value="">Not assigned</option>${ownerOptions}</select></label><label>Why it matters<textarea name="why_it_matters" rows="3" maxlength="1200">${esc(p.why_it_matters||'')}</textarea></label><label>Next review date<input name="next_review_at" type="date" value="${esc(p.next_review_at||'')}"></label><button type="submit">Save project context</button></form>
+    ${stateTargets.length?`<form data-project-state="${p.id}" class="memory-form project-state-form"><label>Change portfolio state<select name="portfolio_state" required><option value="">Choose state…</option>${stateTargets.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('')}</select></label><label>Human reason<textarea name="reason" rows="2" maxlength="1000" required></textarea></label><label class="checkbox-row"><input type="checkbox" name="confirmed" required> I confirm this deliberate portfolio-state change.</label><button type="submit">Change portfolio state</button></form>`:'<p><strong>Dead / Retired is terminal.</strong> This project remains available as institutional history.</p>'}
+  </section>`;
 
   let tab=projectTabById.get(Number(p.id));
   if(!tab){
@@ -1510,7 +1530,7 @@ function drawerProject(id){
 
   let content='';
   if(tab==='overview'){
-    content=`${executionNote}${revisionPlanHtml}${expectedSummary}${planHtml}${runHtml}`;
+    content=`${contextHtml}${executionNote}${revisionPlanHtml}${expectedSummary}${planHtml}${runHtml}`;
   }else if(tab==='outputs'){
     content=`${executionNote}<section class="drawer-section outputs-intro">
       <div class="section-row"><h4>Current Project Outputs</h4><span>${outputs.length} current</span></div>
@@ -1541,14 +1561,15 @@ function drawerProject(id){
     <section class="drawer-section memory-create"><h4>Add project memory</h4>${memoryForm({projectId:p.id})}</section>`;
   }else if(tab==='history'){
     const revisionHistory=revisionPlans.length?`<section class="drawer-section"><h4>Revision history</h4>${revisionPlans.map(r=>`<div class="mini-history revision-history-item"><span><strong>Revision ${esc(r.revision_number)}</strong> — ${esc(r.status)}</span><small>${esc(r.summary)}</small><small>${fmtTime(r.updated_at,true)} · ${esc(r.provider)} / ${esc(r.model)}</small></div>`).join('')}</section>`:'';
-    content=`${revisionHistory}<section class="drawer-section"><h4>Approval history</h4>${approvals.length?approvals.map(a=>`<div class="mini-history"><span><strong>${esc(a.status)}</strong> — ${esc(displayWorkflowText(a.title))}</span>${a.decision_note?`<small>Note: ${esc(a.decision_note)}</small>`:''}<small>${fmtTime(a.updated_at,true)}</small></div>`).join(''):'<p>No approvals yet.</p>'}</section>${runHtml}`;
+    const portfolioHistory=`<section class="drawer-section"><h4>Portfolio-state history</h4>${stateHistory.length?stateHistory.map(x=>`<div class="mini-history"><span><strong>${esc(x.previous_state||'Needs review')}</strong> → <strong>${esc(x.new_state)}</strong></span><small>${esc(x.reason)} · ${esc(x.actor)} · ${fmtTime(x.created_at,true)}</small></div>`).join(''):'<p>No portfolio-state changes recorded yet.</p>'}</section>`;
+    content=`${portfolioHistory}${revisionHistory}<section class="drawer-section"><h4>Approval history</h4>${approvals.length?approvals.map(a=>`<div class="mini-history"><span><strong>${esc(a.status)}</strong> — ${esc(displayWorkflowText(a.title))}</span>${a.decision_note?`<small>Note: ${esc(a.decision_note)}</small>`:''}<small>${fmtTime(a.updated_at,true)}</small></div>`).join(''):'<p>No approvals yet.</p>'}</section>${runHtml}`;
   }
 
   return `${backButton('projects')}
     <div class="drawer-card project-detail-head">
       <span class="profile-kicker">Project #${p.id}</span>
       <strong>${esc(p.title)}</strong>
-      <small>${esc(p.status)} · ${outputs.length} current output${outputs.length===1?'':'s'} · ${currentFiles.length} file${currentFiles.length===1?'':'s'}${previousOutputs.length?` · ${previousOutputs.length} previous output version${previousOutputs.length===1?'':'s'}`:''} · updated ${fmtTime(p.updated_at,true)}</small>
+      <small>${esc(portfolioLabel)} portfolio · ${esc(p.status)} workflow · ${outputs.length} current output${outputs.length===1?'':'s'} · ${currentFiles.length} file${currentFiles.length===1?'':'s'}${previousOutputs.length?` · ${previousOutputs.length} previous output version${previousOutputs.length===1?'':'s'}`:''} · updated ${fmtTime(p.updated_at,true)}</small>
     </div>
     ${tabBar}
     <div class="project-tab-content">${content}</div>`;
@@ -1599,7 +1620,9 @@ function drawerTask(id){
     sourceBadge='<span class="result-source simulated">Simulated workflow result</span>';
   }
   const statuses=['Waiting','In Progress','Blocked','Completed'];
-  return `${backButton('project',t.project_id)}<div class="drawer-card task-detail-head"><span class="profile-kicker">Task ${t.sequence}</span><strong>${esc(displayWorkflowText(t.title))}</strong><small>${esc(p?.title||'Project')}</small></div>${t.brief?`<section class="drawer-section"><h4>Stella’s brief</h4><p>${esc(t.brief)}</p></section>`:''}<div class="management-grid"><div class="management-stat"><span>Owner</span><strong>${esc(owner?.name||'Unassigned')}</strong></div><div class="management-stat"><span>Status</span><strong>${esc(t.status)}</strong></div></div>${programsLibraryFirstCard(t)}${t.result?`<section class="drawer-section"><div class="section-row"><h4>Result</h4>${sourceBadge}</div><div class="result-panel">${esc(t.result)}</div></section>`:''}${t.status==='Blocked'&&p?.status==='Execution Interrupted'?`<section class="drawer-section task-recovery"><h4>Recovery</h4><p>This task stopped the automated workflow. Retry the project to continue from unfinished work without repeating completed tasks.</p><button type="button" class="recovery-button" data-retry-project="${p.id}">Retry / Resume Workflow</button></section>`:''}<section class="drawer-section"><h4>Manual status</h4><div class="status-actions">${statuses.map(s=>`<button type="button" data-task-status="${t.id}" data-status-value="${esc(s)}" class="${s===t.status?'selected':''}">${esc(s)}</button>`).join('')}</div><small class="helper-text">Manual status changes are blocked while the automated campus workflow is actively running.</small></section><section class="drawer-section"><div class="section-row"><h4>Task notes</h4><span>${notes.length}</span></div>${notes.length?notes.map(n=>`<div class="note-card"><strong>${esc(n.author)}</strong><p>${esc(n.body)}</p><div class="note-card-footer"><small>${fmtTime(n.created_at,true)}</small><button type="button" data-memory-capture-kind="note" data-memory-capture-id="${n.id}">Remember</button></div></div>`).join(''):'<p>No task notes yet.</p>'}<form class="note-form" data-note-task="${t.id}"><label>Add task note<textarea name="body" rows="3" maxlength="1200" placeholder="Add context or instructions for this task..."></textarea></label><button type="submit">Save note</button></form></section>`;
+  const blockerOptions=['Person','Date','Approval','Dependency','Condition','Other'].map(x=>`<option value="${x}"${t.blocker_type===x?' selected':''}>${x}</option>`).join('');
+  const attentionHtml=`<section class="drawer-section"><h4>Attention context</h4><form class="memory-form" data-task-attention="${t.id}"><label>Blocker type<select name="blocker_type"><option value="">No recorded blocker type</option>${blockerOptions}</select></label><label>Blocked reason<textarea name="blocked_reason" rows="2" maxlength="1000">${esc(t.blocked_reason||'')}</textarea></label><label>Blocked until<input type="date" name="blocked_until" value="${esc(t.blocked_until||'')}"></label><label class="checkbox-row"><input type="checkbox" name="is_optional"${Number(t.is_optional)?' checked':''}> This task is genuinely optional.</label><button type="submit">Save attention context</button></form></section>`;
+  return `${backButton('project',t.project_id)}<div class="drawer-card task-detail-head"><span class="profile-kicker">Task ${t.sequence}</span><strong>${esc(displayWorkflowText(t.title))}</strong><small>${esc(p?.title||'Project')}</small></div>${t.brief?`<section class="drawer-section"><h4>Stella’s brief</h4><p>${esc(t.brief)}</p></section>`:''}<div class="management-grid"><div class="management-stat"><span>Owner</span><strong>${esc(owner?.name||'Unassigned')}</strong></div><div class="management-stat"><span>Status</span><strong>${esc(t.status)}</strong></div></div>${programsLibraryFirstCard(t)}${t.result?`<section class="drawer-section"><div class="section-row"><h4>Result</h4>${sourceBadge}</div><div class="result-panel">${esc(t.result)}</div></section>`:''}${t.status==='Blocked'&&p?.status==='Execution Interrupted'?`<section class="drawer-section task-recovery"><h4>Recovery</h4><p>This task stopped the automated workflow. Retry the project to continue from unfinished work without repeating completed tasks.</p><button type="button" class="recovery-button" data-retry-project="${p.id}">Retry / Resume Workflow</button></section>`:''}<section class="drawer-section"><h4>Manual status</h4><div class="status-actions">${statuses.map(s=>`<button type="button" data-task-status="${t.id}" data-status-value="${esc(s)}" class="${s===t.status?'selected':''}">${esc(s)}</button>`).join('')}</div><small class="helper-text">Manual status changes are blocked while the automated campus workflow is actively running.</small></section>${attentionHtml}<section class="drawer-section"><div class="section-row"><h4>Task notes</h4><span>${notes.length}</span></div>${notes.length?notes.map(n=>`<div class="note-card"><strong>${esc(n.author)}</strong><p>${esc(n.body)}</p><div class="note-card-footer"><small>${fmtTime(n.created_at,true)}</small><button type="button" data-memory-capture-kind="note" data-memory-capture-id="${n.id}">Remember</button></div></div>`).join(''):'<p>No task notes yet.</p>'}<form class="note-form" data-note-task="${t.id}"><label>Add task note<textarea name="body" rows="3" maxlength="1200" placeholder="Add context or instructions for this task..."></textarea></label><button type="submit">Save note</button></form></section>`;
 }
 function drawerDepartment(buildingId){
   const b=buildingById(buildingId);if(!b)return '<p>Location not found.</p>';
@@ -2442,6 +2465,30 @@ async function updateTaskStatus(id,status){
   catch(err){toast(err.message);}
 }
 
+async function saveProjectContext(form){
+  const fd=new FormData(form),projectId=Number(form.dataset.projectContext);
+  try{
+    await post(`/api/projects/${projectId}/context`,{purpose:String(fd.get('purpose')||''),owner_agent_id:String(fd.get('owner_agent_id')||'')||null,why_it_matters:String(fd.get('why_it_matters')||''),next_review_at:String(fd.get('next_review_at')||'')||null});
+    toast('Project context saved.');openDrawer('project',projectId,'projects');
+  }catch(err){toast(err.message);}
+}
+
+async function changeProjectPortfolioState(form){
+  const fd=new FormData(form),projectId=Number(form.dataset.projectState);
+  try{
+    await post(`/api/projects/${projectId}/portfolio-state`,{portfolio_state:String(fd.get('portfolio_state')||''),reason:String(fd.get('reason')||''),confirmed:fd.get('confirmed')==='on'});
+    toast('Portfolio state changed and recorded in history.');openDrawer('project',projectId,'projects');
+  }catch(err){toast(err.message);}
+}
+
+async function saveTaskAttention(form){
+  const fd=new FormData(form),taskId=Number(form.dataset.taskAttention);
+  try{
+    await post(`/api/tasks/${taskId}/attention`,{blocker_type:String(fd.get('blocker_type')||'')||null,blocked_reason:String(fd.get('blocked_reason')||''),blocked_until:String(fd.get('blocked_until')||'')||null,is_optional:fd.get('is_optional')==='on'});
+    toast('Task attention context saved.');openDrawer('task',taskId,'projects');
+  }catch(err){toast(err.message);}
+}
+
 async function planRevision(projectId){
   const project=projectById(projectId);
   const title=project?.title||`Project ${projectId}`;
@@ -2932,6 +2979,9 @@ els.drawerBody.addEventListener('change',e=>{
 
 els.drawerBody.addEventListener('submit',e=>{
   const form=e.target.closest('form');if(!form)return;e.preventDefault();
+  if(form.hasAttribute('data-project-context')){saveProjectContext(form);return;}
+  if(form.hasAttribute('data-project-state')){changeProjectPortfolioState(form);return;}
+  if(form.hasAttribute('data-task-attention')){saveTaskAttention(form);return;}
   if(form.hasAttribute('data-stella-daily-form')){sendStellaDaily(form);return;}
   if(form.hasAttribute('data-librarian-form')){askLibrarian(form);return;}
   if(form.hasAttribute('data-library-upload-form')){uploadLibraryInbox(form);return;}

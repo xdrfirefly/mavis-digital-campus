@@ -108,7 +108,7 @@ def _post_form(url: str, values: dict[str, str], timeout: int = DEFAULT_TIMEOUT_
 
 
 def _get_json(url: str, token: str, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict[str, Any]:
-    request = Request(url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": "Mavis-Digital-Campus/0.9.9"})
+    request = Request(url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": "Mavis-Digital-Campus/0.10"})
     try:
         with urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed Google endpoint only
             return json.loads(response.read(4_000_000).decode("utf-8"))
@@ -629,7 +629,7 @@ def _stream_download_to_path(
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/octet-stream",
-            "User-Agent": "Mavis-Digital-Campus/0.9.9",
+            "User-Agent": "Mavis-Digital-Campus/0.10",
         },
     )
     size = 0

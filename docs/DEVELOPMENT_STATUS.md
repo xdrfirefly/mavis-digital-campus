@@ -4,6 +4,9 @@ Audit scope: repository contents as inspected on 2026-09-07. This document does 
 
 ## Working / Implemented
 
+- v0.10 Phase 1 Portfolio-State Normalization keeps workflow `projects.status` unchanged while adding human-governed Active Now, Dormant, Nursery / Future Idea, Completed, and Dead / Retired portfolio states; project purpose, canonical six-staff ownership, why-it-matters, state rationale, next review date, and auditable state history; and bounded task blocker/optional metadata.
+- v0.10 legacy migration maps only workflow `Completed` to portfolio Completed and known in-progress workflow states to provisional Active Now. Ambiguous rows remain visibly unclassified for trusted-operator review. Nursery/Dormant/completed/unclassified activation and retirement require explicit confirmation and a human reason; Dead / Retired is terminal, and no AI or background path can activate projects.
+- Ordinary Daily Steward task, blocker, linked-commitment, project-linked grant, and project-scoped memory candidates now require portfolio Active Now. The Daily Steward response shape itself is unchanged pending the separately scoped v0.10 dispatcher phase.
 - FastAPI/SQLite campus application with static campus-map UI, canonical assets, WebSocket refreshes, and seeded buildings/agents.
 - Projects, tasks, approvals, revision workflows, role artifacts, notes, activity log, and AI control/cost records.
 - Ask Campus deterministically answers narrowly matched personal calendar questions for today, tomorrow, the next seven days, and named weekdays. Future focus uses the existing target-date-aware Daily Steward, makes no writes or AI calls, and calendar event content is excluded from external AI prompts.
@@ -45,6 +48,7 @@ Audit scope: repository contents as inspected on 2026-09-07. This document does 
 1. `app.py` combines schema migration, persistence, HTTP APIs, workflow orchestration, and domain logic; unrelated edits can affect broad behavior.
 2. `static/js/app.js` and the CSS/UI shell are tightly coupled to exact DOM IDs, asset paths, cache keys, and map coordinates. Tests intentionally guard many literal strings.
 3. SQLite migrations are inline and additive on startup. Schema edits require both upgrade-path and clean-database verification.
+   v0.10 deliberately leaves ambiguous legacy portfolio states as `NULL` until human review, so operators upgrading a database with nonstandard workflow statuses must classify those projects before they can enter ordinary operational focus.
 4. A module-global `workflow_task` permits one workflow at a time and is process-local; its lifecycle affects approvals, demos, resumes, and UI state.
 5. File paths are derived from `DB_PATH.parent`; database relocation changes the repository and Library roots as well.
 

@@ -1,8 +1,21 @@
-# Mavis Digital Campus v0.9.9 — Explicit Drive Library Snapshots
+# Mavis Digital Campus v0.10 — Portfolio-State Normalization
 
-## v0.9.9 focus
+## v0.10 focus
 
-Mavis Digital Campus v0.9.9 adds explicitly selected Google Drive snapshots to Library Incoming Materials while preserving the approved-root boundary and `drive.file` scope. Direct-root files require explicit file approval; nested files also require explicit approval of every otherwise-inaccessible containing folder. Imports are bounded local snapshots, remain quarantined until human catalog approval, are not synchronized or written back to Drive, and are excluded from Rose search and AI context until cataloged through the existing trusted Library workflow.
+Mavis Digital Campus v0.10 Phase 1 separates long-term portfolio relevance from workflow execution state. Projects now retain their existing workflow `status` while recording a human-governed portfolio state, purpose, canonical staff owner, reason for relevance, and next review date. Portfolio-state changes are deterministic and audited; ambiguous legacy projects remain visibly unclassified until a trusted operator reviews them. Task records gain bounded blocker and optional-work metadata for later attention-management work without adding dependency graphs or scheduling automation.
+
+### Portfolio-state normalization
+
+- Portfolio states are Active Now, Dormant, Nursery / Future Idea, Completed, and Dead / Retired.
+- Nursery, Dormant, completed, or ambiguous projects require an explicit human reason and confirmation before becoming Active Now.
+- Dead / Retired is a terminal state in v0.10 Phase 1.
+- Workflow statuses, approval gates, recovery behavior, and the existing six-agent staff model remain unchanged.
+- Dormant, Nursery, Dead / Retired, and unclassified projects are excluded from ordinary Daily Steward task and blocker candidates.
+- No Campus priorities, guardrail engine, Daily Dispatcher redesign, weekly planner, or automatic state changes are included in Phase 1.
+
+### v0.9.9 Drive foundation retained
+
+Mavis Digital Campus retains the v0.9.9 explicitly selected Google Drive snapshot workflow while preserving the approved-root boundary and `drive.file` scope. Direct-root files require explicit file approval; nested files also require explicit approval of every otherwise-inaccessible containing folder. Imports remain bounded local snapshots, quarantined until human catalog approval, unsynchronized, and excluded from Rose search and AI context until cataloged through the existing trusted Library workflow.
 
 ### Google Drive foundation
 
@@ -60,14 +73,14 @@ This release searches **Grants.gov only** for Vernadette's live grant discovery.
 
 The existing **Weather & Seasons** system remains unchanged: personal-weather-station data can be used when authorized, with the regional forecast fallback retained.
 
-Target schema: **0.9.9**.
+Target schema: **0.10**.
 
 ## Upgrade
 
-1. Extract v0.9.9 into a new folder.
+1. Extract v0.10 into a new folder.
 2. Run `IMPORT DATA FROM PREVIOUS VERSION.bat`.
 3. Point it at your working **v0.9.7** folder.
-4. Start v0.9.9 normally.
+4. Start v0.10 normally.
 5. Leave the Campus map open for a minute or two; available staff should occasionally move gently around their home area.
 6. Ask two or three questions. The newest exchange should stay at the top; scroll down inside the response panel to see older ones.
 

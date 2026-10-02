@@ -355,6 +355,7 @@ body.modal-open{overflow:hidden}
 .memory-actions button:hover,.memory-form button:hover{background:#3a4d42;border-color:#8da094}
 .memory-create h4{margin-bottom:8px}
 .memory-form{display:grid;gap:8px}
+.memory-form .checkbox-row{display:flex;align-items:center;gap:7px}.memory-form .checkbox-row input{width:auto;margin:0}
 .memory-form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;align-items:end}
 .memory-scope-note{display:block;color:#9caf9f;font:600 9px/1.35 system-ui,sans-serif;padding:7px 0}
 .project-memory-intro{margin-bottom:8px}

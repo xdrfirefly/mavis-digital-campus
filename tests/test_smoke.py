@@ -10,8 +10,8 @@ import app as campus
 
 LIVE_VERSION = campus.SCHEMA_VERSION
 LIVE_BUILD = f"v{LIVE_VERSION}"
-LIVE_SHELL_LABEL = f"{LIVE_BUILD} · Google Drive Foundation"
-LIVE_CACHE_KEY = "099"
+LIVE_SHELL_LABEL = f"{LIVE_BUILD} · Portfolio-State Normalization"
+LIVE_CACHE_KEY = "010"
 
 
 def test_active_release_surfaces_align_with_schema_version():
@@ -6879,15 +6879,20 @@ def test_v08698_grant_ui_and_cache_key():
 
 def test_v08698_vernadette_add_report_update_commands(tmp_path, monkeypatch):
     import asyncio
+    import calendar
     import app as appmod
     monkeypatch.setattr(appmod, 'DB_PATH', tmp_path / 'vernadette-talk.db')
     appmod.init_db()
+    with appmod.db() as conn:
+        today = appmod._vernadette_local_today(conn)
+    due_day = calendar.monthrange(today.year, today.month)[1]
+    due_date = appmod.date(today.year, today.month, due_day)
     added = asyncio.run(appmod.api_vernadette_command(appmod.VernadetteCommandRequest(
-        text='Vernadette, add a grant from Appalachian Future Fund called Community Food Education due September 30, 2026 for $25,000.'
+        text=f'Vernadette, add a grant from Appalachian Future Fund called Community Food Education due {due_date.strftime("%B")} {due_day}, {today.year} for $25,000.'
     )))
     assert added['status'] == 'ok' and added['action'] == 'add'
     assert added['grants'][0]['title'] == 'Community Food Education'
-    assert added['grants'][0]['deadline'] == '2026-09-30'
+    assert added['grants'][0]['deadline'] == due_date.isoformat()
     assert added['grants'][0]['amount_min'] == 25000
     assert added['grants'][0]['amount_max'] == 25000
 
@@ -7695,7 +7700,7 @@ def test_google_drive_v098_schema_state_write_boundaries_disconnect_and_privacy(
     monkeypatch.setattr(campus, "DB_PATH", old)
 
 
-def test_google_drive_v098_secret_upgrade_prompt_and_role_boundaries(tmp_path):
+def test_google_drive_v098_secret_upgrade_prompt_and_role_boundaries(tmp_path, monkeypatch):
     import logging
     import upgrade_helper as helper
     import google_drive_provider as provider
@@ -7714,6 +7719,8 @@ def test_google_drive_v098_secret_upgrade_prompt_and_role_boundaries(tmp_path):
     record = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d', ("127.0.0.1","GET","/api/drive/google/callback?code=private-code&picked_file_ids=private-root","1.1",200), None)
     campus._GoogleOAuthAccessLogFilter().filter(record)
     assert "private-code" not in str(record.args) and record.args[2] == "/api/drive/google/callback"
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "prompt-boundary.db")
+    campus.init_db()
     for agent in ("stella","percy","rose","stewart"):
         with campus.db() as conn:
             prompt = campus._campus_advisor_prompt(agent, "ordinary question", conn)
@@ -8373,8 +8380,8 @@ def test_v096_seasonal_context_transparency_ui_and_release_contract():
     js = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
     css = (ROOT / "static/css/app.css").read_text(encoding="utf-8")
     manifest = json.loads((ROOT / "static/assets/asset-manifest.json").read_text(encoding="utf-8"))
-    assert LIVE_VERSION == "0.9.9"
-    assert LIVE_CACHE_KEY == "099"
+    assert LIVE_VERSION == "0.10"
+    assert LIVE_CACHE_KEY == "010"
     assert "Rose’s Seasonal Briefing" in js
     assert "getJson('/api/environment/seasonal-context')" in js
     assert "Observed Now" in js and "established observations" in js
@@ -9253,3 +9260,202 @@ def test_v099_phase2_drive_download_restrictions_size_timeout_and_cleanup(tmp_pa
     except provider.GoogleDriveError as exc:
         assert "http 503" in str(exc).lower()
     assert not destination.exists() and not list(tmp_path.glob(".*.drive-*.tmp"))
+
+
+def test_v010_clean_schema_has_separate_portfolio_and_attention_fields(tmp_path, monkeypatch):
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "clean-v010.db")
+    campus.init_db()
+    with campus.db() as conn:
+        project_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)")}
+        task_columns = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
+        history_columns = {row[1] for row in conn.execute("PRAGMA table_info(project_state_history)")}
+        assert {"status", "portfolio_state", "purpose", "owner_agent_id", "why_it_matters", "state_reason", "state_changed_at", "next_review_at"} <= project_columns
+        assert {"blocker_type", "blocked_reason", "blocked_until", "is_optional"} <= task_columns
+        assert {"project_id", "previous_state", "new_state", "reason", "actor", "created_at"} <= history_columns
+        assert conn.execute("SELECT schema_version FROM schema_meta WHERE id=1").fetchone()[0] == "0.10"
+
+
+def test_v010_migrates_only_unambiguous_legacy_projects(tmp_path, monkeypatch):
+    import sqlite3
+
+    db_path = tmp_path / "legacy-v099.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript("""
+        CREATE TABLE projects(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE schema_meta(id INTEGER PRIMARY KEY CHECK(id=1),schema_version TEXT NOT NULL,updated_at TEXT NOT NULL);
+        INSERT INTO schema_meta(id,schema_version,updated_at) VALUES(1,'0.9.9','2026-01-01T00:00:00+00:00');
+        INSERT INTO projects(title,status,created_at,updated_at) VALUES
+            ('Finished','Completed','2026-01-01T00:00:00+00:00','2026-01-02T00:00:00+00:00'),
+            ('Under way','Active','2026-01-01T00:00:00+00:00','2026-01-03T00:00:00+00:00'),
+            ('Proposed','Awaiting Approval','2026-01-01T00:00:00+00:00','2026-01-03T00:00:00+00:00'),
+            ('Unclear','Approved for Development','2026-01-01T00:00:00+00:00','2026-01-04T00:00:00+00:00');
+    """)
+    conn.commit(); conn.close()
+    monkeypatch.setattr(campus, "DB_PATH", db_path)
+    campus.init_db()
+    with campus.db() as conn:
+        projects = {row["title"]: dict(row) for row in conn.execute("SELECT * FROM projects")}
+        assert projects["Finished"]["status"] == "Completed" and projects["Finished"]["portfolio_state"] == "Completed"
+        assert projects["Under way"]["status"] == "Active" and projects["Under way"]["portfolio_state"] == "Active Now"
+        assert projects["Proposed"]["status"] == "Awaiting Approval" and projects["Proposed"]["portfolio_state"] is None
+        assert projects["Unclear"]["status"] == "Approved for Development" and projects["Unclear"]["portfolio_state"] is None
+        history = list(conn.execute("SELECT actor,new_state FROM project_state_history ORDER BY project_id"))
+        assert [tuple(row) for row in history] == [("System Migration", "Completed"), ("System Migration", "Active Now")]
+        assert conn.execute("SELECT schema_version FROM schema_meta WHERE id=1").fetchone()[0] == "0.10"
+
+
+def test_v010_portfolio_transitions_are_human_audited_and_make_no_ai_calls(tmp_path, monkeypatch):
+    import pytest
+
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "transitions.db")
+    campus.init_db()
+    now = campus.utc_now()
+    with campus.db() as conn:
+        project_id = int(conn.execute(
+            "INSERT INTO projects(title,status,portfolio_state,created_at,updated_at) VALUES(?,?,?,?,?)",
+            ("Future workshop", "Approved for Development", None, now, now),
+        ).lastrowid)
+        before_ai = conn.execute("SELECT COUNT(*) FROM ai_calls").fetchone()[0]
+
+    with pytest.raises(campus.HTTPException) as missing_confirmation:
+        asyncio.run(campus.api_project_portfolio_state(project_id, campus.ProjectPortfolioStateRequest(portfolio_state="Nursery / Future Idea", reason="Keep this idea for later.")))
+    assert missing_confirmation.value.status_code == 409
+    asyncio.run(campus.api_project_portfolio_state(project_id, campus.ProjectPortfolioStateRequest(portfolio_state="Nursery / Future Idea", reason="Keep this idea for later.", confirmed=True)))
+    with pytest.raises(campus.HTTPException) as missing_reason:
+        asyncio.run(campus.api_project_portfolio_state(project_id, campus.ProjectPortfolioStateRequest(portfolio_state="Active Now", reason="", confirmed=True)))
+    assert missing_reason.value.status_code == 400
+    asyncio.run(campus.api_project_portfolio_state(project_id, campus.ProjectPortfolioStateRequest(portfolio_state="Active Now", reason="The human committed to run it now.", confirmed=True)))
+    asyncio.run(campus.api_project_portfolio_state(project_id, campus.ProjectPortfolioStateRequest(portfolio_state="Completed", reason="The intended workshop package is finished.")))
+    with pytest.raises(campus.HTTPException):
+        asyncio.run(campus.api_project_portfolio_state(project_id, campus.ProjectPortfolioStateRequest(portfolio_state="Dormant", reason="Completed cannot become dormant.", confirmed=True)))
+    asyncio.run(campus.api_project_portfolio_state(project_id, campus.ProjectPortfolioStateRequest(portfolio_state="Active Now", reason="A human deliberately reopened the project.", confirmed=True)))
+    asyncio.run(campus.api_project_portfolio_state(project_id, campus.ProjectPortfolioStateRequest(portfolio_state="Dead / Retired", reason="The human retired this project.", confirmed=True)))
+    with pytest.raises(campus.HTTPException):
+        asyncio.run(campus.api_project_portfolio_state(project_id, campus.ProjectPortfolioStateRequest(portfolio_state="Active Now", reason="Terminal projects cannot reactivate.", confirmed=True)))
+
+    with campus.db() as conn:
+        project = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+        history = conn.execute("SELECT * FROM project_state_history WHERE project_id=? ORDER BY id", (project_id,)).fetchall()
+        assert project["status"] == "Approved for Development"
+        assert project["portfolio_state"] == "Dead / Retired"
+        assert [row["new_state"] for row in history] == ["Nursery / Future Idea", "Active Now", "Completed", "Active Now", "Dead / Retired"]
+        assert all(row["actor"] == "Human" and row["reason"] for row in history)
+        assert conn.execute("SELECT COUNT(*) FROM ai_calls").fetchone()[0] == before_ai
+
+
+def test_v010_all_nonterminal_transition_paths_and_context_metadata(tmp_path, monkeypatch):
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "paths.db")
+    campus.init_db(); now = campus.utc_now()
+    with campus.db() as conn:
+        project_id = int(conn.execute(
+            "INSERT INTO projects(title,status,portfolio_state,created_at,updated_at) VALUES(?,?,?,?,?)",
+            ("State paths", "Active", "Active Now", now, now),
+        ).lastrowid)
+    asyncio.run(campus.api_project_portfolio_state(project_id, campus.ProjectPortfolioStateRequest(portfolio_state="Dormant", reason="Pause deliberately.")))
+    asyncio.run(campus.api_project_portfolio_state(project_id, campus.ProjectPortfolioStateRequest(portfolio_state="Nursery / Future Idea", reason="Return it to idea stage.")))
+    asyncio.run(campus.api_project_portfolio_state(project_id, campus.ProjectPortfolioStateRequest(portfolio_state="Dormant", reason="Hold for a later review.")))
+    asyncio.run(campus.api_project_portfolio_state(project_id, campus.ProjectPortfolioStateRequest(portfolio_state="Active Now", reason="Resume by human choice.", confirmed=True)))
+    asyncio.run(campus.api_project_context(project_id, campus.ProjectContextRequest(
+        purpose="Preserve the useful scope.", owner_agent_id="programs", why_it_matters="It supports public learning.", next_review_at="2026-11-01"
+    )))
+    with campus.db() as conn:
+        row = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+        assert (row["portfolio_state"], row["purpose"], row["owner_agent_id"], row["why_it_matters"], row["next_review_at"]) == (
+            "Active Now", "Preserve the useful scope.", "programs", "It supports public learning.", "2026-11-01"
+        )
+
+
+def test_v010_transition_matrix_covers_every_allowed_and_disallowed_path(tmp_path, monkeypatch):
+    import pytest
+
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "transition-matrix.db")
+    campus.init_db(); now = campus.utc_now()
+    allowed = {
+        None: set(campus.PORTFOLIO_STATES),
+        "Active Now": {"Dormant", "Completed", "Dead / Retired"},
+        "Dormant": {"Active Now", "Nursery / Future Idea", "Dead / Retired"},
+        "Nursery / Future Idea": {"Active Now", "Dormant", "Dead / Retired"},
+        "Completed": {"Active Now", "Dead / Retired"},
+        "Dead / Retired": set(),
+    }
+    assert campus.PROJECT_PORTFOLIO_TRANSITIONS == allowed
+    all_starts = [None, *sorted(campus.PORTFOLIO_STATES)]
+    for previous in all_starts:
+        for target in sorted(campus.PORTFOLIO_STATES):
+            with campus.db() as conn:
+                project_id = int(conn.execute(
+                    "INSERT INTO projects(title,status,portfolio_state,created_at,updated_at) VALUES(?,?,?,?,?)",
+                    (f"{previous or 'unclassified'} to {target}", "Active", previous, now, now),
+                ).lastrowid)
+            request = campus.ProjectPortfolioStateRequest(
+                portfolio_state=target,
+                reason=f"Human test of {previous or 'Needs Review'} to {target}.",
+                confirmed=True,
+            )
+            if target in allowed[previous]:
+                result = asyncio.run(campus.api_project_portfolio_state(project_id, request))
+                assert result["portfolio_state"] == target
+            else:
+                with pytest.raises(campus.HTTPException) as rejected:
+                    asyncio.run(campus.api_project_portfolio_state(project_id, request))
+                assert rejected.value.status_code == 409
+
+
+def test_v010_inactive_projects_are_excluded_from_operational_focus_and_blockers(tmp_path, monkeypatch):
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "focus-filter.db")
+    campus.init_db(); now = campus.utc_now()
+    with campus.db() as conn:
+        for sequence, portfolio_state in enumerate(("Active Now", "Dormant", "Nursery / Future Idea", "Dead / Retired"), start=1):
+            project_id = int(conn.execute(
+                "INSERT INTO projects(title,status,portfolio_state,created_at,updated_at) VALUES(?,?,?,?,?)",
+                (f"{portfolio_state} project", "Active", portfolio_state, now, now),
+            ).lastrowid)
+            conn.execute(
+                "INSERT INTO tasks(project_id,title,owner_agent_id,status,sequence,brief,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                (project_id, f"{portfolio_state} blocked", "research", "Blocked", sequence, "", now, now),
+            )
+        steward = campus.daily_steward(conn)
+        executive = campus.executive_summary(conn)
+    blocked_titles = {item["title"] for item in steward["focus"] if item["kind"] == "blocked_task"}
+    assert blocked_titles == {"Active Now blocked"}
+    assert executive["blocked_tasks"] == 1
+    assert executive["active_projects"] == 1
+
+
+def test_v010_task_attention_metadata_is_bounded_and_deterministic(tmp_path, monkeypatch):
+    import pytest
+
+    monkeypatch.setattr(campus, "DB_PATH", tmp_path / "task-attention.db")
+    campus.init_db(); now = campus.utc_now()
+    with campus.db() as conn:
+        project_id = int(conn.execute("INSERT INTO projects(title,status,created_at,updated_at) VALUES('Repair','Active',?,?)", (now, now)).lastrowid)
+        task_id = int(conn.execute(
+            "INSERT INTO tasks(project_id,title,owner_agent_id,status,sequence,created_at,updated_at) VALUES(?,'Wait for part','caretaker','Blocked',1,?,?)",
+            (project_id, now, now),
+        ).lastrowid)
+        before_ai = conn.execute("SELECT COUNT(*) FROM ai_calls").fetchone()[0]
+    asyncio.run(campus.api_task_attention(task_id, campus.TaskAttentionRequest(
+        blocker_type="Dependency", blocked_reason="Replacement valve has not arrived.", blocked_until="2026-10-12", is_optional=True
+    )))
+    with pytest.raises(campus.HTTPException):
+        asyncio.run(campus.api_task_attention(task_id, campus.TaskAttentionRequest(blocker_type="Graph Edge")))
+    with campus.db() as conn:
+        task = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+        assert (task["blocker_type"], task["blocked_reason"], task["blocked_until"], task["is_optional"]) == (
+            "Dependency", "Replacement valve has not arrived.", "2026-10-12", 1
+        )
+        assert conn.execute("SELECT COUNT(*) FROM ai_calls").fetchone()[0] == before_ai
+
+
+def test_v010_ui_uses_explicit_portfolio_relevance_and_existing_six_staff():
+    js = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
+    assert "find(p=>p.portfolio_state==='Active Now')" in js
+    assert "Human classification required." in js
+    assert "data-project-context" in js and "data-project-state" in js
+    assert "Portfolio-state history" in js and "data-task-attention" in js
